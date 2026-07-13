@@ -38,6 +38,8 @@ def _criar_engine_sqlite(url: str, echo: bool):
 
 def _criar_engine_postgres(url: str, echo: bool):
     """Cria engine PostgreSQL com pool configurado para produção."""
+    if url.startswith("postgresql://") and "+asyncpg" not in url:
+        url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
     return create_async_engine(
         url,
         echo=echo,
