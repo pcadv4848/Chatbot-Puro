@@ -1,0 +1,28 @@
+# ── Arquivos sensíveis ──
+.env
+.env.local
+*.key
+*.pem
+credentials.json
+
+# ── Dados gerados em tempo de execução ──
+data/
+output/
+
+# ── Cache do Python ──
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+
+# ── IDE / Editor ──
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ── Sistema ──
+.DS_Store
+Thumbs.db
