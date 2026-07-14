@@ -17,6 +17,10 @@ from src.services.antiban import enviar_com_seguranca, finalizar_conversa
 
 logger = logging.getLogger(__name__)
 
+_ultimo_envio_global: float = 0.0
+_envio_lock: asyncio.Lock = asyncio.Lock()
+INTERVALO_ENVIO_SEGUNDOS = 5
+
 
 def _deve_retentar(e: Exception) -> bool:
     """Só retenta em erros de rede (RequestError) ou servidor 5xx."""
@@ -113,11 +117,25 @@ async def close_client() -> None:
         _client = None
 
 
+async def _rate_limit_envio():
+    global _ultimo_envio_global
+    async with _envio_lock:
+        agora = time.time()
+        desde_ultimo = agora - _ultimo_envio_global
+        if desde_ultimo < INTERVALO_ENVIO_SEGUNDOS:
+            espera = INTERVALO_ENVIO_SEGUNDOS - desde_ultimo
+            logger.debug("Rate limit: aguardando %.1fs (global)", espera)
+            await asyncio.sleep(espera)
+        _ultimo_envio_global = time.time()
+
+
 async def _enviar_mensagem_uma_vez(whatsapp_id: str, texto: str) -> dict:
     """Envia mensagem via OpenWA (sem proteção anti-ban, sem retry)."""
     global _ultimo_erro_envio
     if not _openwa_configurado():
         return {"status": "error", "message": "OpenWA não configurado (OPENWA_API_KEY ausente)"}
+
+    await _rate_limit_envio()
 
     payload = {
         "chatId": _normalizar_id(whatsapp_id),

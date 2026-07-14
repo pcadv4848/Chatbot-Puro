@@ -692,13 +692,33 @@ async def forcar_registro_webhook():
 
 @router.get("/qr")
 async def obter_qr_code(token: str = Query("")):
-    from src.services.whatsapp import obter_qr, criar_sessao, iniciar_sessao, deletar_sessao, configurar_webhook
+    from src.services.whatsapp import (
+        obter_qr, criar_sessao, iniciar_sessao, deletar_sessao,
+        configurar_webhook, obter_status_sessao,
+    )
     from src.services.whatsapp_openwa import extrair_qr_base64, resolver_uuid_sessao
     from src.config import settings as cfg
 
     token_param = f"?token={token}" if token else ""
 
     await resolver_uuid_sessao()
+
+    # Verificar status da sessão antes de tentar QR
+    try:
+        status_data = await obter_status_sessao()
+        if status_data.get("status") == "failed":
+            logger.info("QR: sessão em failed — recriando...")
+            try:
+                await deletar_sessao()
+            except Exception:
+                pass
+            await asyncio.sleep(1)
+            await criar_sessao()
+            await asyncio.sleep(2)
+            await iniciar_sessao()
+            await asyncio.sleep(3)
+    except Exception:
+        pass
 
     qr_data = await obter_qr()
     status = qr_data.get("status", "")
