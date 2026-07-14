@@ -117,7 +117,7 @@ def _parse_openwa_payload(payload: dict) -> list[dict]:
                 target = _extrair_whatsapp_id(to_jid)
                 admin_id = settings.admin_whatsapp or _bot_phone_number or ""
                 if admin_id and mesmo_telefone(sender, admin_id):
-                    if body in _ADMIN_INPUTS:
+                    if any(body.startswith(cmd) for cmd in _ADMIN_INPUTS):
                         return [{"id": data.get("id", ""), "from": target,
                                  "type": "text", "body": body, "admin_cmd": True}]
                     return [{"id": data.get("id", ""), "from": target,

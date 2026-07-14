@@ -1,14 +1,14 @@
-"""Gerenciamento de etiquetas do WhatsApp Business via OpenWA REST API.
+"""Gerenciamento de etiquetas do WhatsApp Business.
 
-Usa os métodos nativos do OpenWA (getAllLabels, getChatsByLabel, addLabel)
-para identificar clientes com a etiqueta "NOVO CLIENTE" e decidir se o bot
-deve responder com IA ou permanecer em silêncio.
-
-Elimina a dependência da Meta Graph API e configurações WHATSAPP_TOKEN/WABA_ID.
+Como a API do OpenWA nao expoe quais contatos tem cada label (GET /labels/{id}/chats
+retorna 404, GET /contacts/{jid} nao inclui campo labels), o sistema mantem um
+arquivo JSON local com as atribuicoes. As chamadas OpenWA sao usadas apenas para
+ADD/REMOVE (que funcionam), enquanto a leitura usa o arquivo local.
 """
 import asyncio
 import json
 import logging
+import os
 from datetime import datetime
 
 import httpx
@@ -18,14 +18,17 @@ from src.config import settings
 logger = logging.getLogger(__name__)
 
 NOVO_CLIENTE_LABEL = "NOVO CLIENTE"
-CACHE_TTL_SECONDS = 300  # 5 minutos
+CACHE_TTL_SECONDS = 300
+LOCAL_LABELS_FILE = os.path.join(os.path.dirname(__file__), "..", "..", "label_assignments.json")
 
+_label_assignments: set[str] = set()  # digitos dos contatos com label
+_label_assignments_loaded: bool = False
 _cache: set[str] = set()
 _ultima_atualizacao: datetime | None = None
 _lock = asyncio.Lock()
 _inicializado: bool = False
 _funcionando: bool = False
-_label_id_cache: dict[str, str] = {}  # nome_da_label -> id_numerico
+_label_id_cache: dict[str, str] = {}
 
 
 def _get_headers() -> dict:
@@ -44,7 +47,7 @@ async def _get_session_id() -> str | None:
         from src.services.whatsapp_openwa import _get_session_id_garantido
         return await _get_session_id_garantido()
     except Exception as e:
-        logger.warning("Não foi possível obter session_id: %s", e)
+        logger.warning("Nao foi possivel obter session_id: %s", e)
         return settings.openwa_session_id or None
 
 
@@ -52,8 +55,71 @@ def _extrair_digitos(wa_id: str) -> str:
     return wa_id.split("@")[0] if "@" in wa_id else wa_id
 
 
+# ── Arquivo local de atribuicoes ──
+
+def _caminho_labels() -> str:
+    return os.path.abspath(LOCAL_LABELS_FILE)
+
+
+def _carregar_assignments() -> set[str]:
+    global _label_assignments_loaded
+    path = _caminho_labels()
+    try:
+        if os.path.exists(path):
+            with open(path, "r", encoding="utf-8") as f:
+                dados = json.load(f)
+                if isinstance(dados, list):
+                    _label_assignments.update(dados)
+        _label_assignments_loaded = True
+        logger.info("Assignments carregados: %d contatos em %s", len(_label_assignments), path)
+    except Exception as e:
+        logger.warning("Erro ao carregar assignments: %s", e)
+        _label_assignments_loaded = True
+    return _label_assignments
+
+
+def _salvar_assignments() -> None:
+    path = _caminho_labels()
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(sorted(_label_assignments), f, ensure_ascii=False, indent=2)
+        logger.info("Assignments salvos: %d contatos", len(_label_assignments))
+    except Exception as e:
+        logger.warning("Erro ao salvar assignments: %s", e)
+
+
+def adicionar_label_local(telefone: str) -> bool:
+    """Adiciona um telefone ao arquivo local de labels (sync)."""
+    raw = _extrair_digitos(telefone)
+    if raw in _label_assignments:
+        return True
+    _label_assignments.add(raw)
+    _cache.add(raw)
+    _salvar_assignments()
+    logger.info("Label local adicionada para %s", raw)
+    return True
+
+
+def remover_label_local(telefone: str) -> bool:
+    """Remove um telefone do arquivo local de labels (sync)."""
+    raw = _extrair_digitos(telefone)
+    if raw not in _label_assignments:
+        return True
+    _label_assignments.discard(raw)
+    _cache.discard(raw)
+    _salvar_assignments()
+    logger.info("Label local removida de %s", raw)
+    return True
+
+
+def listar_labels_locais() -> list[str]:
+    return sorted(_label_assignments)
+
+
+# ── OpenWA label listing (apenas metadados) ──
+
 async def _listar_labels() -> list[dict] | None:
-    """Obtém todas as etiquetas via OpenWA REST API (GET /labels)."""
     session_id = await _get_session_id()
     if not session_id:
         return None
@@ -61,7 +127,6 @@ async def _listar_labels() -> list[dict] | None:
     headers = _get_headers()
 
     async with httpx.AsyncClient(timeout=10.0) as client:
-        # Tenta GET /labels (Easy API) — confirmado funcional
         for url in [
             f"{base}/sessions/{session_id}/labels",
             f"{base}/sessions/{session_id}/labels/list",
@@ -71,7 +136,6 @@ async def _listar_labels() -> list[dict] | None:
                 logger.info("GET %s -> %s", url, resp.status_code)
                 if resp.status_code == 200:
                     data = resp.json()
-                    logger.info("Resposta /labels: %s", json.dumps(data, ensure_ascii=False)[:1000])
                     if isinstance(data, list):
                         return data
                     if isinstance(data, dict) and "data" in data:
@@ -79,7 +143,6 @@ async def _listar_labels() -> list[dict] | None:
             except Exception as e:
                 logger.warning("GET %s falhou: %s", url, e)
 
-        # Fallback: POST /getAllLabels
         try:
             resp = await client.post(
                 f"{base}/sessions/{session_id}/getAllLabels",
@@ -88,7 +151,6 @@ async def _listar_labels() -> list[dict] | None:
             logger.info("POST /getAllLabels -> %s", resp.status_code)
             if resp.status_code == 200:
                 data = resp.json()
-                logger.info("Resposta /getAllLabels: %s", json.dumps(data, ensure_ascii=False)[:1000])
                 if isinstance(data, list):
                     return data
                 if isinstance(data, dict) and "data" in data:
@@ -99,82 +161,60 @@ async def _listar_labels() -> list[dict] | None:
     return None
 
 
-async def _chats_por_label(nome_label: str) -> set[str]:
-    """Obtém contatos com uma etiqueta específica via OpenWA.
+# ── OpenWA bulk query (fallback, geralmente falha) ──
 
-    Fluxo:
-      1. GET /labels → obtem ID numerico da label pelo nome
-      2. GET /labels/{id}/chats → obtem contatos com aquela label
-    """
+async def _chats_por_label(nome_label: str) -> set[str]:
+    """Tenta obter contatos via OpenWA GET /labels/{id}/chats (quase sempre 404)."""
     session_id = await _get_session_id()
     if not session_id:
-        logger.warning("_chats_por_label: sem session_id")
         return set()
 
     base = _get_base_url()
     headers = _get_headers()
 
-    # 1. Obter todas as labels para achar o ID da que queremos
     labels = await _listar_labels()
     if not labels:
-        logger.warning("_chats_por_label: _listar_labels retornou None")
         return set()
 
     label_id: str | None = None
     for label in labels:
-        nome = label.get("name", "").strip()
-        if nome.upper() == nome_label.upper():
+        if label.get("name", "").strip().upper() == nome_label.upper():
             label_id = str(label.get("id", ""))
-            logger.info("Label '%s' encontrada: id=%s, payload=%s", nome, label_id,
-                        json.dumps(label, ensure_ascii=False)[:500])
             break
 
     if not label_id:
-        logger.warning("_chats_por_label: label '%s' nao encontrada entre %d labels",
-                       nome_label, len(labels))
         return set()
 
-    # 2. Buscar contatos com esta label via GET /labels/{id}/chats
     async with httpx.AsyncClient(timeout=10.0) as client:
-        for tentativa_url in [
+        for url in [
             f"{base}/sessions/{session_id}/labels/{label_id}/chats",
             f"{base}/sessions/{session_id}/labels/{label_id}/contacts",
         ]:
             try:
-                resp = await client.get(tentativa_url, headers=headers, timeout=10)
-                logger.info("GET %s -> %s", tentativa_url, resp.status_code)
+                resp = await client.get(url, headers=headers, timeout=10)
                 if resp.status_code == 200:
                     data = resp.json()
-                    logger.info("Resposta chats da label %s: %s", label_id,
-                                json.dumps(data, ensure_ascii=False)[:1000])
                     contatos: set[str] = set()
-                    chats_raw: list = []
+                    raw_list: list = []
                     if isinstance(data, list):
-                        chats_raw = data
+                        raw_list = data
                     elif isinstance(data, dict):
-                        tmp = data.get("data") or data.get("items") or data.get("chats") or data.get("contacts") or data.get("result") or []
-                        if isinstance(tmp, list):
-                            chats_raw = tmp
-                        elif isinstance(tmp, dict):
-                            chats_raw = tmp.get("contacts") or tmp.get("chats") or tmp.get("list") or []
-                    for chat in chats_raw:
+                        tmp = data.get("data") or data.get("items") or data.get("chats") or data.get("contacts") or []
+                        raw_list = tmp if isinstance(tmp, list) else []
+                    for chat in raw_list:
                         cid = (chat.get("id", "") or chat.get("jid", "") or
-                               chat.get("chatId", "") or chat.get("remoteJid", "") or
-                               chat.get("participant", "") or "")
+                               chat.get("chatId", "") or chat.get("remoteJid", "") or "")
                         if cid:
                             contatos.add(_extrair_digitos(cid))
                     if contatos:
-                        logger.info("_chats_por_label: %d contatos com label '%s'", len(contatos), nome_label)
                         return contatos
-            except Exception as e:
-                logger.warning("GET %s falhou: %s", tentativa_url, e)
+            except Exception:
+                pass
 
-    logger.warning("_chats_por_label: nenhum contato encontrado para label '%s' (id=%s)", nome_label, label_id)
     return set()
 
 
 async def _obter_id_label(nome: str) -> str | None:
-    """Obtém o ID numérico de uma label pelo nome."""
     if nome in _label_id_cache:
         return _label_id_cache[nome]
     labels = await _listar_labels()
@@ -184,61 +224,18 @@ async def _obter_id_label(nome: str) -> str | None:
         if label.get("name", "").strip().upper() == nome.upper():
             lid = str(label.get("id", ""))
             _label_id_cache[nome] = lid
-            logger.info("Label '%s' mapeada para id=%s", nome, lid)
             return lid
-    logger.warning("Label '%s' nao encontrada entre %d labels", nome, len(labels))
     return None
-
-
-async def _verificar_label_contato(whatsapp_id: str, label_id: str) -> bool:
-    """Verifica se um contato especifico tem a label pelo ID via OpenWA.
-
-    Tenta obter o chat/contato e verificar se a label esta presente.
-    """
-    session_id = await _get_session_id()
-    if not session_id:
-        return False
-    base = _get_base_url()
-    headers = _get_headers()
-    jid = f"{_extrair_digitos(whatsapp_id)}@c.us"
-    logger.info("verificar_label_contato(%s): jid=%s, label_id=%s", whatsapp_id, jid, label_id)
-
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        for url in [
-            f"{base}/sessions/{session_id}/contacts/{jid}",
-            f"{base}/sessions/{session_id}/chats/{jid}",
-        ]:
-            try:
-                resp = await client.get(url, headers=headers, timeout=10)
-                logger.info("GET %s -> %s", url, resp.status_code)
-                if resp.status_code == 200:
-                    data = resp.json()
-                    logger.info("Resposta %s: %s", url.split("/")[-1],
-                                json.dumps(data, ensure_ascii=False)[:600])
-                    # Verifica varios campos possiveis de labels
-                    raw_labels = data.get("labels") or data.get("labelIds") or data.get("labelsArray") or []
-                    if isinstance(raw_labels, list):
-                        for l in raw_labels:
-                            lid = str(l.get("id", l)) if isinstance(l, dict) else str(l)
-                            if lid == label_id:
-                                logger.info("Label %s encontrada no contato %s!", label_id, whatsapp_id)
-                                return True
-                    elif isinstance(raw_labels, (int, str)):
-                        if str(raw_labels) == label_id:
-                            return True
-            except Exception as e:
-                logger.warning("GET %s falhou: %s", url, e)
-
-    logger.info("Label %s NAO encontrada no contato %s", label_id, whatsapp_id)
-    return False
 
 
 async def atualizar_cache(force: bool = False) -> None:
     global _cache, _ultima_atualizacao, _inicializado, _funcionando
 
+    if not _label_assignments_loaded:
+        _carregar_assignments()
+
     if not settings.openwa_api_key or not settings.openwa_api_url:
-        logger.info("atualizar_cache: OpenWA nao configurado")
-        _cache = set()
+        _cache = _label_assignments.copy()
         _ultima_atualizacao = datetime.now()
         _inicializado = True
         _funcionando = False
@@ -247,82 +244,143 @@ async def atualizar_cache(force: bool = False) -> None:
     async with _lock:
         now = datetime.now()
         if not force and _ultima_atualizacao and (now - _ultima_atualizacao).total_seconds() < CACHE_TTL_SECONDS:
-            logger.info("atualizar_cache: cache ainda fresco (TTL %ds)", CACHE_TTL_SECONDS)
             return
         if force and _ultima_atualizacao and (now - _ultima_atualizacao).total_seconds() < 3:
-            logger.info("atualizar_cache: force ignorado (ultima ha <3s)")
             return
-        logger.info("atualizar_cache: %s", "FORCE" if force else "normal")
 
-        # Tenta bulk via _chats_por_label (pode falhar se API nao suportar)
+        # Tenta bulk — quase sempre vazio, mas tentamos
         contatos = set()
         try:
             contatos = await _chats_por_label(NOVO_CLIENTE_LABEL)
-        except Exception as e:
-            logger.warning("_chats_por_label falhou: %s", e)
+        except Exception:
+            pass
 
-        _cache = contatos
+        # Unir com assignments locais (fonte primaria)
+        _cache = contatos | _label_assignments
         _ultima_atualizacao = datetime.now()
         _inicializado = True
         _funcionando = True
-        if contatos:
-            logger.info("Cache de labels atualizado: %d contatos com '%s'", len(_cache), NOVO_CLIENTE_LABEL)
-        else:
-            logger.info("Cache de labels atualizado: vazio (fallback para verificacao individual)")
+        logger.info("Cache atualizado: %d via OpenWA + %d local = %d total",
+                    len(contatos), len(_label_assignments), len(_cache))
 
-    # Pre-aquece o cache de ID da label (independente do bulk)
     await _obter_id_label(NOVO_CLIENTE_LABEL)
 
 
 async def verificar_label(whatsapp_id: str) -> bool:
     """Verifica se um contato tem a etiqueta 'NOVO CLIENTE'.
 
-    Estrategia:
-      1. Cache bulk (se o contato estiver na lista, resposta rapida)
-      2. Cache miss → verificacao individual via API OpenWA
-      3. Se individual falhar, tenta refresh bulk e re-tenta
+    Fontes (em ordem):
+      1. Arquivo local (label_assignments.json)
+      2. Cache OpenWA (bulk, geralmente vazio)
     """
     global _ultima_atualizacao, _inicializado
 
+    if not _label_assignments_loaded:
+        _carregar_assignments()
+
     if not settings.openwa_api_key or not settings.openwa_api_url:
-        logger.info("verificar_label: OpenWA nao configurado")
         _inicializado = True
-        return False
+        return _extrair_digitos(whatsapp_id) in _label_assignments
 
     if not _inicializado:
-        logger.info("verificar_label: nao inicializado, inicializando")
         await atualizar_cache(force=True)
 
     if not _funcionando:
-        logger.info("verificar_label: label service nao esta funcionando")
-        return False
+        return _extrair_digitos(whatsapp_id) in _label_assignments
 
     raw = _extrair_digitos(whatsapp_id)
-    logger.info("verificar_label(%s): raw=%s, cache_size=%d", whatsapp_id, raw, len(_cache))
 
-    # Tier 1: cache bulk hit
+    # 1. Local (fonte primaria)
+    if raw in _label_assignments:
+        logger.info("verificar_label(%s): LOCAL HIT", raw)
+        return True
+
+    # 2. Cache OpenWA
     if raw in _cache:
         logger.info("verificar_label(%s): CACHE HIT", raw)
         return True
 
-    # Tier 2: verificacao individual via API
-    label_id = await _obter_id_label(NOVO_CLIENTE_LABEL)
-    if label_id:
-        tem_label = await _verificar_label_contato(whatsapp_id, label_id)
-        if tem_label:
-            _cache.add(raw)
-            logger.info("verificar_label(%s): confirmado via contato individual", raw)
-            return True
+    # 3. Tenta refresh
+    await atualizar_cache(force=True)
+    if raw in _cache or raw in _label_assignments:
+        return True
 
-    # Tier 3: refresh bulk (pode pegar labels adicionadas recentemente)
-    if label_id is None:
-        logger.info("verificar_label(%s): sem label_id, tentando refresh bulk", raw)
-        await atualizar_cache(force=True)
-        if raw in _cache:
-            return True
-
-    logger.info("verificar_label(%s): FALSE — cliente sem label '%s'", raw, NOVO_CLIENTE_LABEL)
+    logger.info("verificar_label(%s): FALSE", raw)
     return False
+
+
+async def adicionar_label(whatsapp_id: str) -> bool:
+    """Adiciona a label via OpenWA E no arquivo local."""
+    raw = _extrair_digitos(whatsapp_id)
+    adicionar_label_local(raw)
+
+    session_id = await _get_session_id()
+    if not session_id:
+        return True
+    base = _get_base_url()
+    headers = _get_headers()
+    jid = f"{raw}@c.us"
+
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        for url in [
+            f"{base}/sessions/{session_id}/addLabel",
+            f"{base}/sessions/{session_id}/labels/add",
+        ]:
+            try:
+                payload = {"args": [NOVO_CLIENTE_LABEL, jid], "label": NOVO_CLIENTE_LABEL, "chatId": jid}
+                resp = await client.post(url, headers=headers, json=payload)
+                if resp.status_code in (200, 201):
+                    logger.info("Label '%s' adicionada via OpenWA a %s", NOVO_CLIENTE_LABEL, raw)
+                    return True
+            except Exception as e:
+                logger.debug("addLabel via %s falhou: %s", url, e)
+
+    logger.warning("addLabel OpenWA falhou para %s — mantida apenas local", raw)
+    return True
+
+
+async def remover_label(whatsapp_id: str) -> bool:
+    """Remove a label via OpenWA E do arquivo local."""
+    raw = _extrair_digitos(whatsapp_id)
+    remover_label_local(raw)
+
+    session_id = await _get_session_id()
+    if not session_id:
+        return True
+    base = _get_base_url()
+    headers = _get_headers()
+    jid = f"{raw}@c.us"
+
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        for url in [
+            f"{base}/sessions/{session_id}/removeLabel",
+            f"{base}/sessions/{session_id}/labels/remove",
+        ]:
+            try:
+                payload = {"args": [NOVO_CLIENTE_LABEL, jid], "label": NOVO_CLIENTE_LABEL, "chatId": jid}
+                resp = await client.post(url, headers=headers, json=payload)
+                if resp.status_code in (200, 201):
+                    logger.info("Label '%s' removida via OpenWA de %s", NOVO_CLIENTE_LABEL, raw)
+                    return True
+            except Exception as e:
+                logger.debug("removeLabel via %s falhou: %s", url, e)
+
+    logger.warning("removeLabel OpenWA falhou para %s — removida apenas local", raw)
+    return True
+
+
+async def inicializar_labels() -> None:
+    _carregar_assignments()
+    await atualizar_cache()
+
+
+async def tarefa_atualizacao_labels():
+    while True:
+        await asyncio.sleep(CACHE_TTL_SECONDS)
+        try:
+            await atualizar_cache()
+        except Exception as e:
+            logger.error("Erro na atualizacao periodica: %s", e)
 
 
 async def adicionar_label(whatsapp_id: str) -> bool:

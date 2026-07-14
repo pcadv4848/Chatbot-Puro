@@ -75,8 +75,8 @@ async def processar_admin_commands(texto: str, sessao: SessionState, admin_cmd: 
         )
     if texto == "GENERAR_DOCS.":
         return await _cmd_gerar_docs(sessao)
-    if texto == "LABEL.":
-        return await _cmd_atualizar_labels()
+    if texto.startswith("LABEL."):
+        return await _cmd_labels(texto)
     return None
 
 
@@ -110,12 +110,38 @@ async def _cmd_gerar_docs(sessao: SessionState) -> str:
     return await _processar_gerando(sessao, force=True)
 
 
-async def _cmd_atualizar_labels() -> str:
-    """Atualiza cache de labels do WhatsApp Business."""
+async def _cmd_labels(texto: str) -> str:
+    """Gerencia labels: LABEL. add {telefone}, LABEL. remove {telefone}, LABEL. list, LABEL."""
+    texto = texto.strip()
+    partes = texto.split(None, 2)
+    cmd = partes[0] if partes else "LABEL."
+
     try:
-        from src.services.whatsapp_labels import atualizar_cache
+        from src.services.whatsapp_labels import (
+            adicionar_label_local, remover_label_local,
+            listar_labels_locais, atualizar_cache,
+        )
+
+        if len(partes) >= 3 and partes[1].lower() == "add":
+            telefone = partes[2].strip()
+            adicionar_label_local(telefone)
+            return f"Label 'NOVO CLIENTE' adicionada localmente para {telefone}."
+
+        if len(partes) >= 3 and partes[1].lower() == "remove":
+            telefone = partes[2].strip()
+            remover_label_local(telefone)
+            return f"Label removida localmente de {telefone}."
+
+        if len(partes) >= 2 and partes[1].lower() == "list":
+            labels = listar_labels_locais()
+            if labels:
+                return "Contatos com label NOVO CLIENTE:\n" + "\n".join(labels)
+            return "Nenhum contato com label NOVO CLIENTE."
+
+        # LABEL. (simples) — refresh
         await atualizar_cache()
-        return "Cache de labels atualizado manualmente."
+        total = len(listar_labels_locais())
+        return f"Cache atualizado. {total} contato(s) com label NOVO CLIENTE."
     except Exception as e:
-        logger.error("Erro ao atualizar labels: %s", e)
-        return f"Erro ao atualizar labels: {e}"
+        logger.error("Erro no comando LABEL: %s", e)
+        return f"Erro: {e}"
