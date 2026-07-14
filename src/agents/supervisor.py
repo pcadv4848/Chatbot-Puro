@@ -184,6 +184,15 @@ async def _processar_humano(texto: str, sessao: SessionState) -> str:
 #  Ponto de entrada principal
 # ═══════════════════════════════════════════════════════════
 
+async def _finalizar_como_existente(sessao: SessionState) -> None:
+    """Remove label 'NOVO CLIENTE' quando cliente deixa de ser novo."""
+    try:
+        from src.services.whatsapp_labels import remover_label
+        await remover_label(sessao.whatsapp_id)
+    except Exception as e:
+        logger.debug("Falha ao remover label de %s: %s", sessao.whatsapp_id, e)
+
+
 async def processar(texto: str, sessao: SessionState) -> str:
     """Processa a mensagem do cliente e retorna a resposta."""
     if sessao.human_attending:
@@ -259,6 +268,7 @@ async def _processar_ia(texto: str, sessao: SessionState) -> str:
         sessao.human_attending = True
         sessao.existing_client = True
         sessao.status = SessionStatus.AGUARDANDO_ADVOGADO
+        await _finalizar_como_existente(sessao)
         await salvar_sessao(sessao)
         return MENSAGEM_HUMANO.format(beneficio="Benefício")
 
@@ -292,6 +302,7 @@ async def _processar_ia(texto: str, sessao: SessionState) -> str:
                 sessao.human_attending = True
                 sessao.existing_client = True
                 sessao.step = 0
+                await _finalizar_como_existente(sessao)
                 await salvar_sessao(sessao)
                 beneficio = BENEFICIO_NOME.get(sessao.tipo_beneficio or "outro", "Benefício")
                 return MENSAGEM_HUMANO.format(beneficio=beneficio)
@@ -448,6 +459,7 @@ async def _processar_classificando(texto: str, sessao: SessionState) -> str:
         sessao.human_attending = True
         sessao.existing_client = True
         sessao.status = SessionStatus.AGUARDANDO_ADVOGADO
+        await _finalizar_como_existente(sessao)
         await salvar_sessao(sessao)
         beneficio = BENEFICIO_NOME.get(sessao.tipo_beneficio or "outro", "Benefício")
         return (
@@ -462,6 +474,7 @@ async def _processar_classificando(texto: str, sessao: SessionState) -> str:
         sessao.existing_client = True
         sessao.status = SessionStatus.AGUARDANDO_ADVOGADO
         sessao.motivo_pausa = "nao foi possivel identificar o beneficio"
+        await _finalizar_como_existente(sessao)
         await salvar_sessao(sessao)
         return (
             "Nao consegui identificar exatamente qual beneficio se aplica "
@@ -574,6 +587,7 @@ async def _processar_trafego_pago(texto: str, sessao: SessionState) -> str:
     sessao.human_attending = True
     sessao.existing_client = True
     sessao.status = SessionStatus.AGUARDANDO_ADVOGADO
+    await _finalizar_como_existente(sessao)
     await salvar_sessao(sessao)
 
     beneficio = BENEFICIO_NOME.get(sessao.tipo_beneficio or "outro", "Benefício")

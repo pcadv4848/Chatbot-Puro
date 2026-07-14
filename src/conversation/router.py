@@ -285,6 +285,9 @@ async def webhook_whatsapp(request: Request):
                     elif msg_type in ("audio", "video"):
                         if not sessao:
                             sessao = await _obter_ou_criar_sessao(whatsapp_id)
+                        if sessao.existing_client and not is_admin and not admin_cmd:
+                            await salvar_sessao(sessao)
+                            continue
                         if sessao.human_attending:
                             await salvar_sessao(sessao)
                         elif msg_type == "audio" and midia_id and whisper_disponivel():

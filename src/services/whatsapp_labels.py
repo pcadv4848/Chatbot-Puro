@@ -74,11 +74,9 @@ async def _listar_labels() -> list[dict] | None:
                     data = resp.json()
                     if isinstance(data, list):
                         return data
-                    if isinstance(data, dict) and "data" in data:
-                        return data["data"]
-                    labels = data if isinstance(data, list) else None
-                    if labels:
-                        return labels
+                    if isinstance(data, dict):
+                        if "data" in data:
+                            return data["data"]
                 elif resp.status_code == 404:
                     continue
                 elif resp.status_code >= 400:
@@ -98,9 +96,10 @@ async def _listar_labels() -> list[dict] | None:
             )
             if resp.status_code == 200:
                 data = resp.json()
-                labels = data if isinstance(data, list) else None
-                if labels:
-                    return labels
+                if isinstance(data, list):
+                    return data
+                if isinstance(data, dict) and "data" in data:
+                    return data["data"]
         except Exception as e:
             logger.debug("POST getAllLabels falhou: %s", e)
 
@@ -119,12 +118,15 @@ async def _chats_por_label(nome_label: str) -> set[str]:
     headers = _get_headers()
     contatos: set[str] = set()
 
+    from urllib.parse import quote
+    label_encoded = quote(nome_label, safe="")
+
     # Tentativa 1: POST /getChatsByLabel (middleware-style)
     async with httpx.AsyncClient(timeout=10.0) as client:
         for tentativa_url in [
             f"{base}/sessions/{session_id}/getChatsByLabel",
             f"{base}/sessions/{session_id}/labels/chats-by-label",
-            f"{base}/sessions/{session_id}/labels/{nome_label}/chats",
+            f"{base}/sessions/{session_id}/labels/{label_encoded}/chats",
         ]:
             try:
                 resp = await client.post(
