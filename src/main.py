@@ -1,6 +1,13 @@
 import asyncio
 import logging
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+    force=True,
+)
+
 from src.engine.logging_filter import DadosSensiveisFilter
 
 logging.getLogger().addFilter(DadosSensiveisFilter())
@@ -19,6 +26,13 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    from src.db.models import Base
+    from src.db.session import engine as _engine
+
+    async with _engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    logger.info("Tabelas do banco verificadas/criadas")
+
     from src.services.whatsapp import get_client, close_client, configurar_webhook
 
     await iniciar_carregamento_sessoes()
