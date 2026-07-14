@@ -66,8 +66,9 @@ if settings.deepseek_api_key:
             temperature=0.3,
         )
         MODO_IA = True
-    except ImportError:
-        pass
+        logger.info("IA: DeepSeek configurado (modelo=%s)", settings.deepseek_model)
+    except Exception as e:
+        logger.warning("IA: DeepSeek falhou ao inicializar: %s", e, exc_info=True)
 
 if not MODO_IA and settings.verboo_api_key:
     try:
@@ -82,8 +83,9 @@ if not MODO_IA and settings.verboo_api_key:
             temperature=0.3,
         )
         MODO_IA = True
-    except ImportError:
-        pass
+        logger.info("IA: Verboo configurado (modelo=%s)", settings.verboo_model)
+    except Exception as e:
+        logger.warning("IA: Verboo falhou ao inicializar: %s", e, exc_info=True)
 
 if not MODO_IA and settings.gemini_api_key:
     try:
@@ -97,8 +99,9 @@ if not MODO_IA and settings.gemini_api_key:
             temperature=0.3,
         )
         MODO_IA = True
-    except ImportError:
-        pass
+        logger.info("IA: Gemini configurado (modelo=%s)", settings.gemini_model)
+    except Exception as e:
+        logger.warning("IA: Gemini falhou ao inicializar: %s", e, exc_info=True)
 
 if not MODO_IA and settings.anthropic_api_key:
     try:
@@ -112,8 +115,12 @@ if not MODO_IA and settings.anthropic_api_key:
             temperature=0.3,
         )
         MODO_IA = True
-    except ImportError:
-        pass
+        logger.info("IA: Anthropic configurado (modelo=%s)", settings.claude_model)
+    except Exception as e:
+        logger.warning("IA: Anthropic falhou ao inicializar: %s", e, exc_info=True)
+
+if not MODO_IA:
+    logger.warning("IA: NENHUM provedor disponivel — usando fallback classico")
 
 
 def _obter_creds_drive() -> str:
