@@ -1,7 +1,7 @@
 import logging
 
 from src.conversation.state import SessionState, SessionStatus
-from src.conversation.jid_utils import session_key
+from src.conversation.jid_utils import mesmo_telefone, session_key
 from src.config import settings
 
 logger = logging.getLogger(__name__)
@@ -39,7 +39,7 @@ async def processar_admin_commands(texto: str, sessao: SessionState, admin_cmd: 
     admin_id = settings.admin_whatsapp or _get_bot_phone() or ""
     if not admin_id:
         return None
-    if not admin_cmd and session_key(sessao.whatsapp_id) != session_key(admin_id):
+    if not admin_cmd and not mesmo_telefone(sessao.whatsapp_id, admin_id):
         return None
 
     texto = ADMIN_ALIASES.get(texto, texto)

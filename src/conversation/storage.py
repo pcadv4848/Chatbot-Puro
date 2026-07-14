@@ -96,7 +96,7 @@ def _desserializar_json(dados: dict) -> SessionState:
         historico_perguntas=dados.get("historico_perguntas", []),
         simplify_mode=dados.get("simplify_mode", False),
         human_attending=dados.get("human_attending", False),
-        existing_client=dados.get("existing_client", True),
+        existing_client=dados.get("existing_client", False),
         reminder_count=dados.get("reminder_count", 0),
     )
 

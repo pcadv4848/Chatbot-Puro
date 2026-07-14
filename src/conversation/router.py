@@ -25,7 +25,7 @@ from src.engine.rate_limit import limiter
 from src.services.transcricao import transcrever_audio_async, disponivel as whisper_disponivel
 from src.services.whatsapp_openwa import _ultimos_envios
 
-from src.conversation.jid_utils import session_key as _session_key, extrair_whatsapp_id as _extrair_whatsapp_id
+from src.conversation.jid_utils import session_key as _session_key, extrair_whatsapp_id as _extrair_whatsapp_id, mesmo_telefone
 from src.conversation.admin_commands import processar_admin_commands as _admin_commands, set_storage_dir as _set_cmd_storage_dir
 
 logger = logging.getLogger(__name__)
@@ -118,7 +118,7 @@ def _parse_openwa_payload(payload: dict) -> list[dict]:
                 target = _extrair_whatsapp_id(to_jid)
                 admin_id = settings.admin_whatsapp or _bot_phone_number or ""
                 sender_raw = sender.replace("@lid", "")
-                if sender_raw == admin_id:
+                if admin_id and mesmo_telefone(sender_raw, admin_id):
                     if body in _ADMIN_INPUTS:
                         return [{"id": data.get("id", ""), "from": target,
                                  "type": "text", "body": body, "admin_cmd": True}]
@@ -250,30 +250,25 @@ async def webhook_whatsapp(request: Request):
                             continue
 
                     admin_id = settings.admin_whatsapp or _bot_phone_number or ""
-                    is_admin = admin_id and _session_key(whatsapp_id) == _session_key(admin_id)
+                    is_admin = admin_id and mesmo_telefone(whatsapp_id, admin_id)
                     if sessao and sessao.existing_client and not is_admin and not admin_cmd:
                         if msg_type == "text" and body:
                             sessao.conversa.append({"role": "user", "content": body})
                             if _detectar_abandono(body):
                                 sessao.status = SessionStatus.PAUSADO
                                 sessao.motivo_pausa = "abandono voluntário"
-                                await salvar_sessao(sessao)
                             else:
                                 from src.agents.supervisor import _processar_humano
                                 await _processar_humano(body, sessao)
                         elif msg_type in ("image", "document") and midia_id:
                             await processar_midia(sessao, midia_id)
                             sessao.conversa.append({"role": "user", "content": f"[midia: {midia_id}]"})
-                            await salvar_sessao(sessao)
-                        elif msg_type in ("audio", "video"):
-                            await salvar_sessao(sessao)
-                        else:
-                            await salvar_sessao(sessao)
-                        if msg_id and msg_id not in sessao.processed_message_ids:
-                            sessao.processed_message_ids.append(msg_id)
-                            if len(sessao.processed_message_ids) > 100:
-                                sessao.processed_message_ids = sessao.processed_message_ids[-50:]
-                            await salvar_sessao(sessao)
+                        if msg_id:
+                            if msg_id not in sessao.processed_message_ids:
+                                sessao.processed_message_ids.append(msg_id)
+                                if len(sessao.processed_message_ids) > 100:
+                                    sessao.processed_message_ids = sessao.processed_message_ids[-50:]
+                        await salvar_sessao(sessao)
                         continue
 
                     if msg_type == "text" and body:
@@ -416,7 +411,7 @@ async def processar_mensagem_texto(whatsapp_id: str, texto: str, admin_cmd: bool
     sessao = await _obter_ou_criar_sessao(whatsapp_id)
 
     admin_id = settings.admin_whatsapp or _bot_phone_number or ""
-    is_admin = admin_id and _session_key(whatsapp_id) == _session_key(admin_id)
+    is_admin = admin_id and mesmo_telefone(whatsapp_id, admin_id)
 
     if not admin_cmd and is_admin:
         admin_cmd = True

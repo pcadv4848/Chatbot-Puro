@@ -167,21 +167,15 @@ async def _processar_humano(texto: str, sessao: SessionState) -> str:
     suficientes, gera documentos automaticamente em background.
     Nao retorna nenhuma mensagem visivel ao usuario.
     """
-    from src.conversation.storage import salvar_sessao
-
     if sessao.status == SessionStatus.CONCLUIDO:
-        await salvar_sessao(sessao)
         return SILENT
 
     texto = texto.strip()
-
     _extrair_e_salvar_campo(texto, sessao)
 
     validacao = validar_dados(sessao.dados_cliente, sessao.tipo_beneficio or "outro")
     if validacao["valido"] and sessao.tipo_beneficio:
         await _processar_gerando(sessao)
-    else:
-        await salvar_sessao(sessao)
 
     return SILENT
 
