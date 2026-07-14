@@ -53,6 +53,7 @@ def _serializar_json(sessao: SessionState) -> dict:
         "historico_perguntas": sessao.historico_perguntas,
         "simplify_mode": sessao.simplify_mode,
         "human_attending": sessao.human_attending,
+        "existing_client": sessao.existing_client,
         "reminder_count": sessao.reminder_count,
     }
     if dados["dados_cliente"]:
@@ -103,6 +104,7 @@ def _desserializar_json(dados: dict) -> SessionState:
         historico_perguntas=dados.get("historico_perguntas", []),
         simplify_mode=dados.get("simplify_mode", False),
         human_attending=dados.get("human_attending", False),
+        existing_client=dados.get("existing_client", True),
         reminder_count=dados.get("reminder_count", 0),
     )
 
@@ -336,6 +338,24 @@ async def arquivar_sessoes_inativas(sessoes_ativas: dict[str, SessionState]) -> 
                 await salvar_sessao(sessao)
 
 
+async def deletar_sessao(whatsapp_id: str) -> None:
+    """Remove sessão do banco de dados e do arquivo JSON."""
+    try:
+        async with async_session() as db:
+            result = await db.execute(
+                select(SessaoModel).where(SessaoModel.whatsapp_id == whatsapp_id)
+            )
+            modelo = result.scalar_one_or_none()
+            if modelo:
+                await db.delete(modelo)
+                await db.commit()
+    except Exception as e:
+        logger.warning("DB delete failed for %s: %s", whatsapp_id, e)
+    caminho = _caminho_sessao(whatsapp_id)
+    if caminho.exists():
+        caminho.unlink()
+
+
 async def carregar_todas_sessoes() -> dict[str, SessionState]:
     sessoes, db_ok = await _carregar_todas_db()
     if not db_ok:
@@ -345,3 +365,13 @@ async def carregar_todas_sessoes() -> dict[str, SessionState]:
 
 _serializar = _serializar_json
 _desserializar = _desserializar_json
+
+__all__ = [
+    "salvar_sessao",
+    "carregar_sessao",
+    "deletar_sessao",
+    "listar_sessoes_arquivaveis",
+    "arquivar_sessoes_inativas",
+    "carregar_todas_sessoes",
+    "STORAGE_DIR",
+]

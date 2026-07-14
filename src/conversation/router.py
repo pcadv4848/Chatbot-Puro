@@ -254,11 +254,38 @@ async def webhook_whatsapp(request: Request):
                     msg_type = msg["type"]
                     body = msg.get("body", "")
                     midia_id = msg.get("midia_id")
+                    admin_cmd = msg.get("admin_cmd", False)
 
                     if msg_id and whatsapp_id:
                         sessao = await _obter_ou_criar_sessao(whatsapp_id)
                         if hasattr(sessao, "processed_message_ids") and msg_id in sessao.processed_message_ids:
                             continue
+
+                    admin_id = settings.admin_whatsapp or _bot_phone_number or ""
+                    if sessao and sessao.existing_client and _session_key(whatsapp_id) != admin_id and not admin_cmd:
+                        if msg_type == "text" and body:
+                            sessao.conversa.append({"role": "user", "content": body})
+                            if _detectar_abandono(body):
+                                sessao.status = SessionStatus.PAUSADO
+                                sessao.motivo_pausa = "abandono voluntário"
+                                await salvar_sessao(sessao)
+                            else:
+                                from src.agents.supervisor import _processar_humano
+                                await _processar_humano(body, sessao)
+                        elif msg_type in ("image", "document") and midia_id:
+                            await processar_midia(sessao, midia_id)
+                            sessao.conversa.append({"role": "user", "content": f"[midia: {midia_id}]"})
+                            await salvar_sessao(sessao)
+                        elif msg_type in ("audio", "video"):
+                            await salvar_sessao(sessao)
+                        else:
+                            await salvar_sessao(sessao)
+                        if msg_id and msg_id not in sessao.processed_message_ids:
+                            sessao.processed_message_ids.append(msg_id)
+                            if len(sessao.processed_message_ids) > 100:
+                                sessao.processed_message_ids = sessao.processed_message_ids[-50:]
+                            await salvar_sessao(sessao)
+                        continue
 
                     if msg_type == "text" and body:
                         admin_cmd = msg.get("admin_cmd", False)
@@ -276,7 +303,7 @@ async def webhook_whatsapp(request: Request):
                     elif msg_type in ("audio", "video"):
                         if not sessao:
                             sessao = await _obter_ou_criar_sessao(whatsapp_id)
-                        if sessao.existing_client or sessao.human_attending:
+                        if sessao.human_attending:
                             await salvar_sessao(sessao)
                         elif msg_type == "audio" and midia_id and whisper_disponivel():
                             try:
@@ -347,14 +374,23 @@ async def _obter_ou_criar_sessao(whatsapp_id: str) -> SessionState:
     sessao = await carregar_sessao(key)
     if sessao is None:
         sessao = SessionState(whatsapp_id=whatsapp_id)
+        try:
+            from src.services.whatsapp_openwa import _bot_ja_conectado_antes, verificar_contato_existente
+            if _bot_ja_conectado_antes:
+                tem_historico = await verificar_contato_existente(whatsapp_id)
+                if tem_historico:
+                    sessao.existing_client = True
+                    logger.info("Cliente %s identificado como antigo via OpenWA", whatsapp_id)
+        except Exception:
+            pass
     else:
         sessao.whatsapp_id = whatsapp_id
-        sessao.existing_client = True
         if sessao.status == SessionStatus.PAUSADO:
             logger.info("Sessão retomada para %s", whatsapp_id)
         elif sessao.status == SessionStatus.ARQUIVADO:
             sessao.status = SessionStatus.CLASSIFICANDO
             sessao.motivo_pausa = None
+            sessao.existing_client = False
             logger.info("Sessão arquivada reativada para %s", whatsapp_id)
 
     sessoes_ativas[key] = sessao
@@ -411,11 +447,6 @@ async def processar_mensagem_texto(whatsapp_id: str, texto: str, admin_cmd: bool
     if sessao.reminder_count > 0:
         sessao.reminder_count = 0
 
-    admin_id = settings.admin_whatsapp or _bot_phone_number or ""
-    if sessao.existing_client and _session_key(sessao.whatsapp_id) != admin_id:
-        await salvar_sessao(sessao)
-        return
-
     msg_inatividade = await _verificar_inatividade(sessao, whatsapp_id)
     if msg_inatividade:
         sessao.conversa.append({"role": "assistant", "content": msg_inatividade})
@@ -458,12 +489,6 @@ async def processar_mensagem_texto(whatsapp_id: str, texto: str, admin_cmd: bool
 
 async def processar_mensagem_midia(whatsapp_id: str, midia_id: str):
     sessao = await _obter_ou_criar_sessao(whatsapp_id)
-
-    admin_id = settings.admin_whatsapp or _bot_phone_number or ""
-    if sessao.existing_client and _session_key(sessao.whatsapp_id) != admin_id:
-        await processar_midia(sessao, midia_id)
-        await salvar_sessao(sessao)
-        return
 
     msg_inatividade = await _verificar_inatividade(sessao, whatsapp_id)
     if msg_inatividade:

@@ -45,15 +45,16 @@ async def processar_admin_commands(texto: str, sessao: SessionState, admin_cmd: 
     texto = ADMIN_ALIASES.get(texto, texto)
 
     if texto == "RESETAR.":
-        if STORAGE_DIR is not None:
-            caminho = STORAGE_DIR / f"sessao_{session_key(sessao.whatsapp_id)}.json"
-            caminho.unlink(missing_ok=True)
+        from src.conversation.storage import deletar_sessao
+        await deletar_sessao(sessao.whatsapp_id)
         sessao.__init__(whatsapp_id=sessao.whatsapp_id)
         return "Conversa resetada. Cliente pode recomecar."
     if texto == "BOT.":
         sessao.human_attending = False
         sessao.existing_client = False
         sessao.status = SessionStatus.CLASSIFICANDO
+        from src.conversation.storage import salvar_sessao
+        await salvar_sessao(sessao)
         return "Modo BOT ativado. Agora respondo automaticamente."
     if texto == "HUMANO.":
         sessao.human_attending = True
