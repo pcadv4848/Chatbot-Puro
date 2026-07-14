@@ -98,7 +98,7 @@ def _desserializar_json(dados: dict) -> SessionState:
         periodos_trabalho_rural=dados.get("periodos_trabalho_rural", []),
         processed_message_ids=dados.get("processed_message_ids", []),
         processed_zapsign_events=dados.get("processed_zapsign_events", []),
-        trafego_pago=dados.get("trafego_pago", True),
+        trafego_pago=dados.get("trafego_pago", False),
         resumo_caso=dados.get("resumo_caso", ""),
         historico_perguntas=dados.get("historico_perguntas", []),
         simplify_mode=dados.get("simplify_mode", False),

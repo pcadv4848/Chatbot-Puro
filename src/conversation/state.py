@@ -41,7 +41,7 @@ class SessionState:
     periodos_trabalho_rural: list = field(default_factory=list)
     processed_message_ids: list = field(default_factory=list)
     processed_zapsign_events: list = field(default_factory=list)
-    trafego_pago: bool = True
+    trafego_pago: bool = False
     resumo_caso: str = ""
     historico_perguntas: list = field(default_factory=list)
     simplify_mode: bool = False
