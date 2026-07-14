@@ -131,8 +131,8 @@ BENEFICIO_NOME: dict[str, str] = {
 }
 
 # ── Constantes do fluxo de classificação ──
-MAX_TENTATIVAS_CLASSIFICACAO = 6
-MIN_STEPS_PARA_CONCLUIR = 1
+MAX_TENTATIVAS_CLASSIFICACAO = 15
+MIN_STEPS_PARA_CONCLUIR = 3
 MAX_OCR_RETRY = settings.max_ocr_retries
 
 # ── Mensagens do fluxo de tráfego pago ──
