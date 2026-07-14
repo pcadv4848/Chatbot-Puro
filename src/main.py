@@ -12,7 +12,8 @@ Hosts gratuitos)
 - O atendimento deve identificar gírias e dialetos regionais para abrangir a maior variedade de clientes possível
 (Considerando que muitos deles não sabem ler)
 
-- Labels não funcionam com o OpenWA (A API do OpenWA é datada)
+- Labels do WhatsApp Business nao funcionam com o OpenWA (API nao expoe contatos por label)
+- Clientes atendidos sao registrados no PostgreSQL e nao recebem mais resposta da IA
 - O OpenWA não tem acesso ao histórico de mensagens dos clientes (necessitando de um database para lembrar deles)
 - O OpenWA não é uma API oficial. Portanto, é necessário ser lento para evitar banimentos de número
 - O OpenWA utiliza chrome, normalmente extremamente pesado, mas ao usar um fork do projeto no deploy, o chromium economiza muito mais RAM
@@ -91,16 +92,6 @@ async def lifespan(app: FastAPI):
         heartbeat_task = asyncio.create_task(tarefa_heartbeat())
         logger.info("Heartbeat OpenWA iniciado")
 
-    labels_task = None
-    if settings.whatsapp_provider == "openwa" and settings.openwa_api_key:
-        try:
-            from src.services.whatsapp_labels import inicializar_labels, tarefa_atualizacao_labels
-            await inicializar_labels()
-            labels_task = asyncio.create_task(tarefa_atualizacao_labels())
-            logger.info("Serviço de etiquetas OpenWA iniciado")
-        except Exception as e:
-            logger.warning("Etiquetas não disponíveis: %s", e)
-
     task = asyncio.create_task(tarefa_arquivamento())
 
     if settings.reminder_cooldown_days > 0:
@@ -125,9 +116,6 @@ async def lifespan(app: FastAPI):
     if heartbeat_task:
         heartbeat_task.cancel()
         logger.info("Heartbeat cancelado")
-    if labels_task:
-        labels_task.cancel()
-        logger.info("Etiquetas cancelado")
     await close_client()
 
 # FastAPI implementação

@@ -359,45 +359,19 @@ async def _obter_ou_criar_sessao(whatsapp_id: str) -> SessionState:
         if old.whatsapp_id != whatsapp_id:
             old.whatsapp_id = whatsapp_id
         logger.debug("_obter_ou_criar_sessao(%s): CACHE HIT, existing_client=%s", whatsapp_id, old.existing_client)
-        if old.existing_client:
-            try:
-                from src.services.whatsapp_labels import verificar_label, NOVO_CLIENTE_LABEL
-                tem_label = await verificar_label(whatsapp_id)
-                logger.debug("_obter_ou_criar_sessao(%s): verificar_label=%s", whatsapp_id, tem_label)
-                if tem_label:
-                    old.existing_client = False
-                    logger.info("Cliente %s recebeu label '%s' — reativado", whatsapp_id, NOVO_CLIENTE_LABEL)
-            except Exception as e:
-                logger.error("_obter_ou_criar_sessao(%s): erro verificar_label: %s", whatsapp_id, e)
         return old
 
     sessao = await carregar_sessao(key)
     if sessao is None:
         logger.debug("_obter_ou_criar_sessao(%s): NOVA sessao", whatsapp_id)
         sessao = SessionState(whatsapp_id=whatsapp_id)
-        tem_historico = False
         try:
-            from src.services.whatsapp_openwa import _bot_ja_conectado_antes, verificar_contato_existente
-            if _bot_ja_conectado_antes:
-                tem_historico = await verificar_contato_existente(whatsapp_id) or False
-                logger.debug("_obter_ou_criar_sessao(%s): tem_historico=%s", whatsapp_id, tem_historico)
+            from src.services.attended_clients import is_attended
+            attended = await is_attended(whatsapp_id)
+            sessao.existing_client = attended
+            logger.debug("_obter_ou_criar_sessao(%s): attended=%s", whatsapp_id, attended)
         except Exception as e:
-            logger.debug("_obter_ou_criar_sessao(%s): erro historico: %s", whatsapp_id, e)
-
-        try:
-            from src.services.whatsapp_labels import verificar_label, NOVO_CLIENTE_LABEL
-            tem_label = await verificar_label(whatsapp_id)
-            logger.debug("_obter_ou_criar_sessao(%s): verificar_label=%s", whatsapp_id, tem_label)
-            if tem_label:
-                sessao.existing_client = False
-                logger.info("Cliente %s com label '%s' — tratando como novo", whatsapp_id, NOVO_CLIENTE_LABEL)
-            else:
-                sessao.existing_client = True
-                logger.warning("Cliente %s SEM label — tratando como antigo (silencioso)", whatsapp_id)
-        except Exception as e:
-            logger.error("_obter_ou_criar_sessao(%s): erro verificar_label: %s", whatsapp_id, e)
-            if tem_historico:
-                sessao.existing_client = True
+            logger.error("_obter_ou_criar_sessao(%s): erro is_attended: %s", whatsapp_id, e)
     else:
         logger.debug("_obter_ou_criar_sessao(%s): carregada do disco, status=%s, existing_client=%s",
                      whatsapp_id, sessao.status.value, sessao.existing_client)
@@ -409,16 +383,6 @@ async def _obter_ou_criar_sessao(whatsapp_id: str) -> SessionState:
             sessao.motivo_pausa = None
             sessao.existing_client = False
             logger.info("Sessão arquivada reativada para %s", whatsapp_id)
-        elif sessao.existing_client:
-            try:
-                from src.services.whatsapp_labels import verificar_label, NOVO_CLIENTE_LABEL
-                tem_label = await verificar_label(whatsapp_id)
-                logger.debug("_obter_ou_criar_sessao(%s): verificar_label(disco)=%s", whatsapp_id, tem_label)
-                if tem_label:
-                    sessao.existing_client = False
-                    logger.info("Cliente %s recebeu label '%s' — reativado", whatsapp_id, NOVO_CLIENTE_LABEL)
-            except Exception as e:
-                logger.error("_obter_ou_criar_sessao(%s): erro verificar_label(disco): %s", whatsapp_id, e)
 
     sessoes_ativas[key] = sessao
     logger.debug("_obter_ou_criar_sessao(%s): final existing_client=%s", whatsapp_id, sessao.existing_client)
@@ -472,7 +436,10 @@ async def processar_mensagem_texto(whatsapp_id: str, texto: str, admin_cmd: bool
         return
 
     if ativar_silencioso:
+        from src.services.attended_clients import mark_attended
+        await mark_attended(whatsapp_id)
         sessao.human_attending = True
+        sessao.existing_client = True
         sessao.status = SessionStatus.AGUARDANDO_ADVOGADO
         await salvar_sessao(sessao)
         logger.info("Modo silencioso ativado na sessão %s por mensagem do humano", whatsapp_id)

@@ -1,5 +1,4 @@
 import asyncio
-import hashlib
 import json
 import logging
 import re
@@ -12,7 +11,6 @@ from src.conversation.state import SessionState, SessionStatus
 from src.conversation.prompts import SYSTEM_PROMPT
 from src.agents.tools.classificar import classificar
 from src.agents.tools.validar import validar_dados
-from src.agents.tools.gerar_documentos import gerar_documentos
 from src.agents.tools.extrair_ocr import processar_midia_ocr
 
 from src.agents.constants import (
@@ -123,43 +121,6 @@ if not MODO_IA:
     logger.warning("IA: NENHUM provedor disponivel — usando fallback classico")
 
 
-def _obter_creds_drive() -> str:
-    """Resolve as credenciais do Google Drive: arquivo → JSON string."""
-    if settings.gdrive_credentials_file:
-        from pathlib import Path as _Path
-        caminho = _Path(settings.gdrive_credentials_file)
-        if caminho.exists():
-            return caminho.read_text()
-    return settings.gdrive_credentials_json
-
-
-async def _upload_docs_para_drive(documentos: list[dict], dados_cliente: dict) -> None:
-    """Faz upload dos documentos gerados para o Google Drive (best-effort)."""
-    creds = _obter_creds_drive()
-    if not creds or not documentos:
-        return
-    try:
-        from src.services.drive import upload_para_drive
-        resultado = await asyncio.to_thread(
-            upload_para_drive,
-            files=documentos,
-            creds_json=creds,
-            folder_id=settings.gdrive_folder_id,
-            nome_cliente=dados_cliente.get("nome", ""),
-            cpf=dados_cliente.get("cpf", ""),
-        )
-        if resultado.get("success"):
-            logger.info(
-                "Docs enviados para Drive: pasta=%s, arquivos=%d",
-                resultado.get("folder_id"),
-                len(resultado.get("files", [])),
-            )
-        else:
-            logger.warning("Falha ao enviar docs para Drive: %s", resultado.get("error"))
-    except Exception as e:
-        logger.error("Erro no upload para Drive: %s", e)
-
-
 async def _processar_humano(texto: str, sessao: SessionState) -> str:
     """Processa mensagens em modo silencioso enquanto humano atende.
 
@@ -183,15 +144,6 @@ async def _processar_humano(texto: str, sessao: SessionState) -> str:
 # ═══════════════════════════════════════════════════════════
 #  Ponto de entrada principal
 # ═══════════════════════════════════════════════════════════
-
-async def _finalizar_como_existente(sessao: SessionState) -> None:
-    """Remove label 'NOVO CLIENTE' quando cliente deixa de ser novo."""
-    try:
-        from src.services.whatsapp_labels import remover_label
-        await remover_label(sessao.whatsapp_id)
-    except Exception as e:
-        logger.debug("Falha ao remover label de %s: %s", sessao.whatsapp_id, e)
-
 
 async def processar(texto: str, sessao: SessionState) -> str:
     """Processa a mensagem do cliente e retorna a resposta."""
@@ -273,10 +225,11 @@ async def _processar_ia(texto: str, sessao: SessionState) -> str:
 
     sessao.step += 1
     if sessao.step > _MAX_TENTATIVAS_CLASSIFICACAO:
+        from src.services.attended_clients import mark_attended
+        await mark_attended(sessao.whatsapp_id)
         sessao.human_attending = True
         sessao.existing_client = True
         sessao.status = SessionStatus.AGUARDANDO_ADVOGADO
-        await _finalizar_como_existente(sessao)
         await salvar_sessao(sessao)
         return MENSAGEM_HUMANO.format(beneficio="Benefício")
 
@@ -307,10 +260,11 @@ async def _processar_ia(texto: str, sessao: SessionState) -> str:
         if alguma_executou:
             await salvar_sessao(sessao)
             if sessao.status == SessionStatus.AGUARDANDO_ADVOGADO:
+                from src.services.attended_clients import mark_attended
+                await mark_attended(sessao.whatsapp_id)
                 sessao.human_attending = True
                 sessao.existing_client = True
                 sessao.step = 0
-                await _finalizar_como_existente(sessao)
                 await salvar_sessao(sessao)
                 beneficio = BENEFICIO_NOME.get(sessao.tipo_beneficio or "outro", "Benefício")
                 return MENSAGEM_HUMANO.format(beneficio=beneficio)
@@ -352,12 +306,6 @@ async def _atualizar_sessao_por_tool(nome_tool: str, resultado: str, sessao: Ses
 
     elif nome_tool == "validar_dados_cliente":
         pass
-
-    elif nome_tool == "gerar_docs":
-        if dados.get("success"):
-            sessao.status = SessionStatus.CONCLUIDO
-            sessao.documentos_gerados = dados.get("documentos", [])
-            await _upload_docs_para_drive(sessao.documentos_gerados, sessao.dados_cliente)
 
     elif nome_tool == "extrair_dados_ocr":
         if isinstance(dados, dict):
@@ -464,10 +412,11 @@ async def _processar_classificando(texto: str, sessao: SessionState) -> str:
         sessao.step = 0
         if not sessao.documentos_faltantes:
             sessao.documentos_faltantes = ["RG", "CPF", "Comprovante de endereço"]
+        from src.services.attended_clients import mark_attended
+        await mark_attended(sessao.whatsapp_id)
         sessao.human_attending = True
         sessao.existing_client = True
         sessao.status = SessionStatus.AGUARDANDO_ADVOGADO
-        await _finalizar_como_existente(sessao)
         await salvar_sessao(sessao)
         beneficio = BENEFICIO_NOME.get(sessao.tipo_beneficio or "outro", "Benefício")
         return (
@@ -478,11 +427,12 @@ async def _processar_classificando(texto: str, sessao: SessionState) -> str:
         )
 
     if sessao.step > _MAX_TENTATIVAS_CLASSIFICACAO:
+        from src.services.attended_clients import mark_attended
+        await mark_attended(sessao.whatsapp_id)
         sessao.human_attending = True
         sessao.existing_client = True
         sessao.status = SessionStatus.AGUARDANDO_ADVOGADO
         sessao.motivo_pausa = "nao foi possivel identificar o beneficio"
-        await _finalizar_como_existente(sessao)
         await salvar_sessao(sessao)
         return (
             "Nao consegui identificar exatamente qual beneficio se aplica "
@@ -595,7 +545,8 @@ async def _processar_trafego_pago(texto: str, sessao: SessionState) -> str:
     sessao.human_attending = True
     sessao.existing_client = True
     sessao.status = SessionStatus.AGUARDANDO_ADVOGADO
-    await _finalizar_como_existente(sessao)
+    from src.services.attended_clients import mark_attended
+    await mark_attended(sessao.whatsapp_id)
     await salvar_sessao(sessao)
 
     beneficio = BENEFICIO_NOME.get(sessao.tipo_beneficio or "outro", "Benefício")
@@ -814,11 +765,12 @@ async def processar_midia(sessao: SessionState, midia_id: str) -> str:
 
 async def _processar_gerando(sessao: SessionState, force: bool = False) -> str:
     from src.conversation.storage import salvar_sessao
+    from src.services.attended_clients import mark_attended
 
     if not force:
         validacao = validar_dados(sessao.dados_cliente, sessao.tipo_beneficio or "outro")
         if not validacao["valido"]:
-            mensagem = "Notei que alguns dados precisam de ajuste antes de gerar os documentos:\n"
+            mensagem = "Notei que alguns dados precisam de ajuste antes de finalizar:\n"
             for inc in validacao.get("inconsistencias", []):
                 mensagem += f"  - {inc}\n"
             if validacao.get("campos_faltantes"):
@@ -833,64 +785,10 @@ async def _processar_gerando(sessao: SessionState, force: bool = False) -> str:
                 mensagem += "\nPode corrigir esses dados? "
             return mensagem
 
-    from pathlib import Path
-    cpf_raw = sessao.dados_cliente.get("cpf", "")
-    if cpf_raw:
-        cpf_raw = cpf_raw.replace(".", "").replace("-", "").replace("/", "")
-    else:
-        cpf_raw = sessao.whatsapp_id
-    pasta_id = hashlib.sha256(cpf_raw.encode()).hexdigest()[:12]
-    tipo_pasta = (sessao.tipo_beneficio or "desconhecido").replace("_", " ").title()
-    nome_pasta = f"{pasta_id} - {tipo_pasta}"
-    output_dir = str(Path(__file__).parent.parent.parent / "output" / nome_pasta)
+    sessao.status = SessionStatus.CONCLUIDO
+    sessao.existing_client = True
+    await mark_attended(sessao.whatsapp_id)
+    await salvar_sessao(sessao)
 
-    resultado = await asyncio.to_thread(gerar_documentos.invoke, {
-        "dados_cliente": sessao.dados_cliente,
-        "tipo_beneficio": sessao.tipo_beneficio or "outro",
-        "esfera": sessao.esfera or "adm",
-        "output_dir": output_dir,
-    })
-
-    if resultado.get("success"):
-        sessao.documentos_gerados = resultado.get("documentos", [])
-
-        if sessao.resumo_caso:
-            try:
-                pasta = Path(__file__).parent.parent.parent / "output" / nome_pasta
-                pasta.mkdir(parents=True, exist_ok=True)
-                resumo_path = pasta / "resumo_caso.txt"
-                resumo_path.write_text(sessao.resumo_caso, encoding="utf-8")
-                logger.info("Resumo do caso salvo em %s", resumo_path)
-                sessao.documentos_gerados.append({
-                    "template": "",
-                    "path": str(resumo_path),
-                    "nome": "resumo_caso.txt",
-                })
-            except Exception as e:
-                logger.warning("Erro ao salvar resumo do caso: %s", e)
-
-        await _upload_docs_para_drive(sessao.documentos_gerados, sessao.dados_cliente)
-
-        docs = resultado.get("documentos", [])
-        nomes = "\n".join(f"  - {d['template']}" for d in docs)
-
-        sessao.status = SessionStatus.CONCLUIDO
-        msg = f"Documentos gerados com sucesso!\n{nomes}"
-
-        await salvar_sessao(sessao)
-        return msg
-    else:
-        erro_msg = resultado.get("message", "erro desconhecido")
-
-        if "Template não encontrado" in erro_msg:
-            return (
-                f"Desculpe, um dos documentos necessários não foi encontrado"
-                f" no sistema."
-                " Pode tentar novamente mais tarde? "
-            )
-
-        return (
-            "Desculpe, tive um erro ao gerar os documentos:"
-            f" {erro_msg}."
-            " Pode tentar novamente? "
-        )
+    beneficio = BENEFICIO_NOME.get(sessao.tipo_beneficio or "outro", "Benefício")
+    return f"Seu caso sobre {beneficio} foi registrado com sucesso!"

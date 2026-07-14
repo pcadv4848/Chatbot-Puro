@@ -140,6 +140,22 @@ class Documento(Base):
     )
 
 
+class AttendedClient(Base):
+    """Clientes que ja foram atendidos (nao recebem resposta da IA).
+
+    Quando um humano envia mensagem pelo numero do bot para um cliente,
+    ou quando o fluxo do chatbot chega ao fim (CONCLUIDO), o cliente
+    e registrado aqui. Na proxima interacao, sera tratado como antigo.
+    """
+    __tablename__ = "attended_clients"
+
+    id = Column(Uuid(), primary_key=True, default=uuid4)
+    whatsapp_id = Column(String, unique=True, nullable=False, index=True)
+    created_at = Column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+
+
 class ArquivoUpload(Base):
     """Uploads de documentos enviados pelo cliente (fotos de RG, exames, etc.)."""
     __tablename__ = "arquivos_upload"
