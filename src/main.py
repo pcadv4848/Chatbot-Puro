@@ -1,6 +1,24 @@
 import asyncio
 import logging
 
+'''
+- Chatbot deve identificar clientes novos, o atendimento por IA só deve ser realizado em clientes novos.
+- O Chatbot não deve se extender muito no atendimento, sendo breve e inicial apenas para identificar o possível
+beneficio daquele cliente em especifico
+- O Chatbot não deve mentir, ocultar informações, ou negar que é uma IA. Ou seja, deve evitar ao máximo conflitos
+com os termos de uso do whatsapp (Para a migração futura com a API oficial do meta)
+- O Chatbot deve ser capaz de escutar audios e ler imagens (Não é possível no momento devido a RAM limitada de 
+Hosts gratuitos)
+- O atendimento deve identificar gírias e dialetos regionais para abrangir a maior variedade de clientes possível
+(Considerando que muitos deles não sabem ler)
+
+- Labels não funcionam com o OpenWA (A API do OpenWA é datada)
+- O OpenWA não tem acesso ao histórico de mensagens dos clientes (necessitando de um database para lembrar deles)
+- O OpenWA não é uma API oficial. Portanto, é necessário ser lento para evitar banimentos de número
+- O OpenWA utiliza chrome, normalmente extremamente pesado, mas ao usar um fork do projeto no deploy, o chromium economiza muito mais RAM
+- OpenWA não é flexivel, servindo apenas para mensagens rapídas predefinidas (Diferente de atendimento IA dinamico)
+'''
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -112,13 +130,14 @@ async def lifespan(app: FastAPI):
         logger.info("Etiquetas cancelado")
     await close_client()
 
-
+# FastAPI implementação
 app = FastAPI(
     title=settings.app_name,
     version="0.1.0",
     lifespan=lifespan,
 )
 
+# Limitador do app para evitar overflow de informações e crash de RAM.
 app.state.limiter = limiter
 app.add_exception_handler(429, _rate_limit_exceeded_handler)
 
@@ -130,6 +149,7 @@ if settings.debug:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
 elif settings.cors_origins:
     origins = [o.strip() for o in settings.cors_origins.split(",") if o.strip()]
     app.add_middleware(
@@ -140,10 +160,12 @@ elif settings.cors_origins:
         allow_headers=["Content-Type", "Authorization"],
     )
 
+
+# Inclusão do webhook e chat router
 app.include_router(webhook_router)
 app.include_router(chat_router)
 
-
+# Checagem da saúde do app por meio de um protocolo healthcehck comum
 @app.get("/health")
 async def health_check():
     return {"status": "ok", "app": settings.app_name}
