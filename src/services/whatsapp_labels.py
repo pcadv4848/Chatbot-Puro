@@ -198,9 +198,9 @@ async def atualizar_cache() -> None:
 async def verificar_label(whatsapp_id: str) -> bool:
     """Verifica se um contato tem a etiqueta 'NOVO CLIENTE'.
 
-    Usa cache local; se desatualizado, atualiza assincronamente.
-    Retorna True se o contato TEM a etiqueta (considerado novo cliente).
-    Se labels não estiverem funcionando, retorna False (comportamento seguro).
+    Se o cache estiver desatualizado, atualiza sincronamente antes
+    de responder — garante que labels recem-adicionadas pelo admin
+    sejam detectadas na proxima mensagem do cliente.
     """
     global _ultima_atualizacao, _inicializado
 
@@ -214,8 +214,8 @@ async def verificar_label(whatsapp_id: str) -> bool:
     if not _funcionando:
         return False
 
-    if _ultima_atualizacao and (datetime.now() - _ultima_atualizacao).total_seconds() > CACHE_TTL_SECONDS:
-        asyncio.create_task(atualizar_cache())
+    if not _ultima_atualizacao or (datetime.now() - _ultima_atualizacao).total_seconds() > CACHE_TTL_SECONDS:
+        await atualizar_cache()
 
     raw = _extrair_digitos(whatsapp_id)
     return raw in _cache
