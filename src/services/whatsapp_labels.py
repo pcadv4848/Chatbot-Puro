@@ -1,9 +1,8 @@
-"""Gerenciamento de etiquetas do WhatsApp Business.
+"""Gerenciamento de etiquetas do WhatsApp Business via OpenWA REST API.
 
-Como a API do OpenWA nao expoe quais contatos tem cada label (GET /labels/{id}/chats
-retorna 404, GET /contacts/{jid} nao inclui campo labels), o sistema mantem um
-arquivo JSON local com as atribuicoes. As chamadas OpenWA sao usadas apenas para
-ADD/REMOVE (que funcionam), enquanto a leitura usa o arquivo local.
+Usa GET /labels/{id} para obter contatos com a label "NOVO CLIENTE",
+e POST /addLabel e /removeLabel para gerenciar as atribuicoes.
+Mantem um cache local (JSON) como fallback transparente.
 """
 import asyncio
 import json
@@ -164,7 +163,11 @@ async def _listar_labels() -> list[dict] | None:
 # ── OpenWA bulk query (fallback, geralmente falha) ──
 
 async def _chats_por_label(nome_label: str) -> set[str]:
-    """Tenta obter contatos via OpenWA GET /labels/{id}/chats (quase sempre 404)."""
+    """Obtem contatos com uma label via GET /labels/{labelId}.
+
+    A documentacao do OpenWA mostra que GET /labels/{id} retorna a label
+    completa, incluindo os contatos/chats atribuidos a ela.
+    """
     session_id = await _get_session_id()
     if not session_id:
         return set()
@@ -172,6 +175,7 @@ async def _chats_por_label(nome_label: str) -> set[str]:
     base = _get_base_url()
     headers = _get_headers()
 
+    # 1. Descobre o ID numerico da label pelo nome
     labels = await _listar_labels()
     if not labels:
         return set()
@@ -183,33 +187,64 @@ async def _chats_por_label(nome_label: str) -> set[str]:
             break
 
     if not label_id:
+        logger.warning("Label '%s' nao encontrada", nome_label)
         return set()
 
+    # 2. GET /labels/{labelId} — retorna a label com contatos
+    url = f"{base}/sessions/{session_id}/labels/{label_id}"
     async with httpx.AsyncClient(timeout=10.0) as client:
-        for url in [
-            f"{base}/sessions/{session_id}/labels/{label_id}/chats",
-            f"{base}/sessions/{session_id}/labels/{label_id}/contacts",
-        ]:
-            try:
-                resp = await client.get(url, headers=headers, timeout=10)
-                if resp.status_code == 200:
-                    data = resp.json()
-                    contatos: set[str] = set()
-                    raw_list: list = []
-                    if isinstance(data, list):
-                        raw_list = data
-                    elif isinstance(data, dict):
-                        tmp = data.get("data") or data.get("items") or data.get("chats") or data.get("contacts") or []
-                        raw_list = tmp if isinstance(tmp, list) else []
-                    for chat in raw_list:
-                        cid = (chat.get("id", "") or chat.get("jid", "") or
-                               chat.get("chatId", "") or chat.get("remoteJid", "") or "")
-                        if cid:
-                            contatos.add(_extrair_digitos(cid))
-                    if contatos:
-                        return contatos
-            except Exception:
-                pass
+        try:
+            resp = await client.get(url, headers=headers, timeout=10)
+            logger.info("GET /labels/%s -> %s", label_id, resp.status_code)
+            if resp.status_code == 200:
+                data = resp.json()
+                logger.info("Resposta /labels/%s: %s", label_id,
+                            json.dumps(data, ensure_ascii=False)[:2000])
+                contatos: set[str] = set()
+
+                # Tenta extrair contatos de varios formatos possiveis
+                candidatos: list = []
+                if isinstance(data, list):
+                    candidatos = data
+                elif isinstance(data, dict):
+                    # Campos que podem conter a lista de contatos
+                    for campo in ("contacts", "chats", "items", "data", "chatIds", "contactIds"):
+                        val = data.get(campo)
+                        if isinstance(val, list):
+                            candidatos = val
+                            break
+                    # Se a propria label tiver os contatos diretamente como array
+                    # ex: {"id":4, "name":"Novo cliente", "contacts":["5561...@c.us"]}
+                    if not candidatos:
+                        # Tenta se o id/name estao no mesmo nivel que os contatos
+                        for k, v in data.items():
+                            if k in ("contacts", "chats", "items", "chatIds", "contactIds"):
+                                if isinstance(v, list):
+                                    candidatos = v
+                                    break
+
+                for item in candidatos:
+                    if isinstance(item, str):
+                        cid = item
+                    elif isinstance(item, dict):
+                        cid = (item.get("id", "") or item.get("jid", "") or
+                               item.get("chatId", "") or item.get("remoteJid", "") or
+                               item.get("participant", "") or "")
+                    else:
+                        continue
+                    if cid:
+                        contatos.add(_extrair_digitos(cid))
+
+                if contatos:
+                    logger.info("Label '%s': %d contatos encontrados", nome_label, len(contatos))
+                    return contatos
+                else:
+                    logger.warning("Label '%s' (id=%s) retornou 200 mas sem contatos no payload",
+                                   nome_label, label_id)
+            else:
+                logger.warning("GET /labels/%s retornou %s", label_id, resp.status_code)
+        except Exception as e:
+            logger.warning("GET /labels/%s falhou: %s", label_id, e)
 
     return set()
 
