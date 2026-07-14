@@ -224,6 +224,7 @@ async def _processar_ia(texto: str, sessao: SessionState) -> str:
 
     @tool
     def classificar_beneficio(texto_cliente: str) -> str:
+        """Identifica o tipo de beneficio previdenciario com base no relato do cliente."""
         return json.dumps(classificar(texto_cliente), ensure_ascii=False)
 
     tools = [classificar_beneficio, extrair_ocr_tool]
