@@ -134,12 +134,9 @@ def _parse_openwa_payload(payload: dict) -> list[dict]:
                     if body in _ADMIN_INPUTS:
                         return [{"id": data.get("id", ""), "from": target,
                                  "type": "text", "body": body, "admin_cmd": True}]
-                    target_key = target.split("@")[0] if "@" in target else target
-                    ultimo = _ultimos_envios.get(target_key, 0)
-                    if time.time() - ultimo > 5.0:
-                        return [{"id": data.get("id", ""), "from": target,
-                                 "type": "text", "body": body, "admin_cmd": True,
-                                 "_ativar_silencioso": True}]
+                    return [{"id": data.get("id", ""), "from": target,
+                             "type": "text", "body": body, "admin_cmd": True,
+                             "_ativar_silencioso": True}]
         return []
 
     from_jid = data.get("from", "")
