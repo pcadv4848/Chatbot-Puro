@@ -7,6 +7,7 @@ deve responder com IA ou permanecer em silêncio.
 Elimina a dependência da Meta Graph API e configurações WHATSAPP_TOKEN/WABA_ID.
 """
 import asyncio
+import json
 import logging
 from datetime import datetime
 
@@ -107,12 +108,10 @@ async def _listar_labels() -> list[dict] | None:
 
 
 async def _chats_por_label(nome_label: str) -> set[str]:
-    """Obtém contatos com uma etiqueta específica via OpenWA.
-
-    Tenta primeiro getChatsByLabel, depois extrai de getAllLabels.
-    """
+    """Obtém contatos com uma etiqueta específica via OpenWA."""
     session_id = await _get_session_id()
     if not session_id:
+        logger.warning("_chats_por_label: sem session_id")
         return set()
     base = _get_base_url()
     headers = _get_headers()
@@ -121,54 +120,66 @@ async def _chats_por_label(nome_label: str) -> set[str]:
     from urllib.parse import quote
     label_encoded = quote(nome_label, safe="")
 
-    # Tentativa 1: POST /getChatsByLabel (middleware-style)
+    # Tenta variacoes de case do nome da label
+    variacoes_label = [nome_label, nome_label.lower(), nome_label.title()]
+
+    # Tentativa 1: POST /getChatsByLabel
     async with httpx.AsyncClient(timeout=10.0) as client:
         for tentativa_url in [
             f"{base}/sessions/{session_id}/getChatsByLabel",
             f"{base}/sessions/{session_id}/labels/chats-by-label",
             f"{base}/sessions/{session_id}/labels/{label_encoded}/chats",
         ]:
-            try:
-                resp = await client.post(
-                    tentativa_url,
-                    headers=headers,
-                    json={"args": [nome_label], "label": nome_label},
-                    timeout=10,
-                )
-                if resp.status_code == 200:
-                    data = resp.json()
-                    if isinstance(data, list):
-                        for chat in data:
-                            cid = chat.get("id", "") or chat.get("jid", "") or ""
+            for label_variacao in variacoes_label:
+                try:
+                    payload = {"args": [label_variacao], "label": label_variacao, "name": label_variacao}
+                    resp = await client.post(tentativa_url, headers=headers, json=payload, timeout=10)
+                    logger.debug("POST %s (label=%s) -> %s", tentativa_url, label_variacao, resp.status_code)
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        logger.debug("Resposta OpenWA: %s", json.dumps(data, ensure_ascii=False)[:500])
+                        chats: list = []
+                        if isinstance(data, list):
+                            chats = data
+                        elif isinstance(data, dict):
+                            raw = data.get("items") or data.get("data") or data.get("result") or []
+                            if isinstance(raw, dict):
+                                raw = raw.get("contacts") or raw.get("chats") or raw.get("list") or raw.get("items") or []
+                            if isinstance(raw, list):
+                                chats = raw
+                        for chat in chats:
+                            cid = chat.get("id", "") or chat.get("jid", "") or chat.get("chatId", "") or chat.get("remoteJid", "") or ""
                             if cid:
                                 contatos.add(_extrair_digitos(cid))
                         if contatos:
+                            logger.info("_chats_por_label: %d contatos encontrados via %s", len(contatos), tentativa_url)
                             return contatos
-                    elif isinstance(data, dict):
-                        items = data.get("items") or data.get("data") or []
-                        for item in items:
-                            cid = item.get("id", "") or item.get("jid", "") or ""
-                            if cid:
-                                contatos.add(_extrair_digitos(cid))
-                        if contatos:
-                            return contatos
-            except Exception as e:
-                logger.debug("POST %s falhou: %s", tentativa_url, e)
+                except Exception as e:
+                    logger.debug("POST %s (label=%s) falhou: %s", tentativa_url, label_variacao, e)
 
     # Tentativa 2: extrair de getAllLabels
+    logger.debug("_chats_por_label: tentando fallback getAllLabels")
     labels = await _listar_labels()
     if labels:
+        logger.debug("getAllLabels retornou %d labels: %s", len(labels), json.dumps(labels, ensure_ascii=False)[:500])
         for label in labels:
-            if label.get("name", "").strip().upper() == nome_label.upper():
-                items = label.get("items") or []
+            nome_label_api = label.get("name", "").strip()
+            if nome_label_api.upper() == nome_label.upper():
+                logger.debug("Label '%s' encontrada em getAllLabels", nome_label_api)
+                # Tenta varios campos que podem conter contatos
+                items = label.get("items") or label.get("contacts") or label.get("chats") or label.get("data") or []
                 for item in items:
-                    cid = item.get("id", "") or ""
+                    cid = item.get("id", "") or item.get("jid", "") or item.get("chatId", "") or item.get("remoteJid", "") or ""
                     if cid:
                         contatos.add(_extrair_digitos(cid))
                 if contatos:
+                    logger.info("_chats_por_label: %d contatos via getAllLabels", len(contatos))
                     return contatos
-                break  # achou a label mas sem items
+                logger.debug("Label '%s' encontrada mas sem contatos no payload", nome_label_api)
+                break
 
+    if not contatos:
+        logger.warning("_chats_por_label: NENHUM contato encontrado para label '%s'", nome_label)
     return contatos
 
 
@@ -176,7 +187,7 @@ async def atualizar_cache(force: bool = False) -> None:
     global _cache, _ultima_atualizacao, _inicializado, _funcionando
 
     if not settings.openwa_api_key or not settings.openwa_api_url:
-        logger.debug("OpenWA não configurado — labels desativados")
+        logger.debug("atualizar_cache: OpenWA nao configurado")
         _cache = set()
         _ultima_atualizacao = datetime.now()
         _inicializado = True
@@ -186,9 +197,12 @@ async def atualizar_cache(force: bool = False) -> None:
     async with _lock:
         now = datetime.now()
         if not force and _ultima_atualizacao and (now - _ultima_atualizacao).total_seconds() < CACHE_TTL_SECONDS:
+            logger.debug("atualizar_cache: cache ainda fresco (TTL %ds)", CACHE_TTL_SECONDS)
             return
         if force and _ultima_atualizacao and (now - _ultima_atualizacao).total_seconds() < 3:
+            logger.debug("atualizar_cache: force ignorado (ultima ha <3s)")
             return
+        logger.debug("atualizar_cache: %s, chamando _chats_por_label...", "FORCE" if force else "normal")
         contatos = await _chats_por_label(NOVO_CLIENTE_LABEL)
         _cache = contatos
         _ultima_atualizacao = datetime.now()
@@ -197,35 +211,40 @@ async def atualizar_cache(force: bool = False) -> None:
         if contatos:
             logger.info("Cache de labels atualizado: %d contatos com '%s'", len(_cache), NOVO_CLIENTE_LABEL)
         else:
-            logger.debug("Cache de labels atualizado: nenhum contato com '%s'", NOVO_CLIENTE_LABEL)
+            logger.warning("Cache de labels atualizado: ZERO contatos com '%s'", NOVO_CLIENTE_LABEL)
 
 
 async def verificar_label(whatsapp_id: str) -> bool:
-    """Verifica se um contato tem a etiqueta 'NOVO CLIENTE'.
-
-    Two-tier:
-      1. Cache hit → resposta instantanea
-      2. Cache miss → força atualizacao sincrona e re-tenta
-    """
+    """Verifica se um contato tem a etiqueta 'NOVO CLIENTE'."""
     global _ultima_atualizacao, _inicializado
 
     if not settings.openwa_api_key or not settings.openwa_api_url:
+        logger.debug("verificar_label: OpenWA nao configurado")
         _inicializado = True
         return False
 
     if not _inicializado:
+        logger.debug("verificar_label: nao inicializado, forçando refresh")
         await atualizar_cache(force=True)
 
     if not _funcionando:
+        logger.debug("verificar_label: label service nao esta funcionando")
         return False
 
     raw = _extrair_digitos(whatsapp_id)
+    logger.debug("verificar_label(%s): raw=%s, cache_size=%d, ultima_atualizacao=%s",
+                 whatsapp_id, raw, len(_cache), _ultima_atualizacao)
 
     if raw in _cache:
+        logger.debug("verificar_label(%s): CACHE HIT", raw)
         return True
 
+    logger.debug("verificar_label(%s): CACHE MISS, forçando refresh", raw)
     await atualizar_cache(force=True)
-    return raw in _cache
+
+    resultado = raw in _cache
+    logger.debug("verificar_label(%s): apos refresh=%s, cache_size=%d", raw, resultado, len(_cache))
+    return resultado
 
 
 async def adicionar_label(whatsapp_id: str) -> bool:

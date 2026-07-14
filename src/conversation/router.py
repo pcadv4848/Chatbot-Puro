@@ -249,7 +249,10 @@ async def webhook_whatsapp(request: Request):
 
                     admin_id = settings.admin_whatsapp or _bot_phone_number or ""
                     is_admin = admin_id and mesmo_telefone(whatsapp_id, admin_id)
+                    logger.debug("MSG %s: existing_client=%s, is_admin=%s, admin_cmd=%s, type=%s, body='%s'",
+                                 whatsapp_id, sessao.existing_client if sessao else None, is_admin, admin_cmd, msg_type, body[:50] if body else "")
                     if sessao and sessao.existing_client and not is_admin and not admin_cmd:
+                        logger.info("BLOQUEADO existing_client: %s (body='%s')", whatsapp_id, body[:80] if body else "")
                         if msg_type == "text" and body:
                             sessao.conversa.append({"role": "user", "content": body})
                             if _detectar_abandono(body):
@@ -350,43 +353,54 @@ def _detectar_abandono(texto: str) -> bool:
 
 async def _obter_ou_criar_sessao(whatsapp_id: str) -> SessionState:
     key = _session_key(whatsapp_id)
+    logger.debug("_obter_ou_criar_sessao(%s): key=%s", whatsapp_id, key)
     if key in sessoes_ativas:
         old = sessoes_ativas[key]
         if old.whatsapp_id != whatsapp_id:
             old.whatsapp_id = whatsapp_id
+        logger.debug("_obter_ou_criar_sessao(%s): CACHE HIT, existing_client=%s", whatsapp_id, old.existing_client)
         if old.existing_client:
             try:
                 from src.services.whatsapp_labels import verificar_label, NOVO_CLIENTE_LABEL
-                if await verificar_label(whatsapp_id):
+                tem_label = await verificar_label(whatsapp_id)
+                logger.debug("_obter_ou_criar_sessao(%s): verificar_label=%s", whatsapp_id, tem_label)
+                if tem_label:
                     old.existing_client = False
                     logger.info("Cliente %s recebeu label '%s' — reativado", whatsapp_id, NOVO_CLIENTE_LABEL)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.error("_obter_ou_criar_sessao(%s): erro verificar_label: %s", whatsapp_id, e)
         return old
 
     sessao = await carregar_sessao(key)
     if sessao is None:
+        logger.debug("_obter_ou_criar_sessao(%s): NOVA sessao", whatsapp_id)
         sessao = SessionState(whatsapp_id=whatsapp_id)
         tem_historico = False
         try:
             from src.services.whatsapp_openwa import _bot_ja_conectado_antes, verificar_contato_existente
             if _bot_ja_conectado_antes:
                 tem_historico = await verificar_contato_existente(whatsapp_id) or False
-        except Exception:
-            pass
+                logger.debug("_obter_ou_criar_sessao(%s): tem_historico=%s", whatsapp_id, tem_historico)
+        except Exception as e:
+            logger.debug("_obter_ou_criar_sessao(%s): erro historico: %s", whatsapp_id, e)
 
         try:
             from src.services.whatsapp_labels import verificar_label, NOVO_CLIENTE_LABEL
-            if await verificar_label(whatsapp_id):
+            tem_label = await verificar_label(whatsapp_id)
+            logger.debug("_obter_ou_criar_sessao(%s): verificar_label=%s", whatsapp_id, tem_label)
+            if tem_label:
                 sessao.existing_client = False
                 logger.info("Cliente %s com label '%s' — tratando como novo", whatsapp_id, NOVO_CLIENTE_LABEL)
             else:
                 sessao.existing_client = True
-                logger.debug("Cliente %s sem label — tratando como antigo", whatsapp_id)
-        except Exception:
+                logger.warning("Cliente %s SEM label — tratando como antigo (silencioso)", whatsapp_id)
+        except Exception as e:
+            logger.error("_obter_ou_criar_sessao(%s): erro verificar_label: %s", whatsapp_id, e)
             if tem_historico:
                 sessao.existing_client = True
     else:
+        logger.debug("_obter_ou_criar_sessao(%s): carregada do disco, status=%s, existing_client=%s",
+                     whatsapp_id, sessao.status.value, sessao.existing_client)
         sessao.whatsapp_id = whatsapp_id
         if sessao.status == SessionStatus.PAUSADO:
             logger.info("Sessão retomada para %s", whatsapp_id)
@@ -398,13 +412,16 @@ async def _obter_ou_criar_sessao(whatsapp_id: str) -> SessionState:
         elif sessao.existing_client:
             try:
                 from src.services.whatsapp_labels import verificar_label, NOVO_CLIENTE_LABEL
-                if await verificar_label(whatsapp_id):
+                tem_label = await verificar_label(whatsapp_id)
+                logger.debug("_obter_ou_criar_sessao(%s): verificar_label(disco)=%s", whatsapp_id, tem_label)
+                if tem_label:
                     sessao.existing_client = False
                     logger.info("Cliente %s recebeu label '%s' — reativado", whatsapp_id, NOVO_CLIENTE_LABEL)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.error("_obter_ou_criar_sessao(%s): erro verificar_label(disco): %s", whatsapp_id, e)
 
     sessoes_ativas[key] = sessao
+    logger.debug("_obter_ou_criar_sessao(%s): final existing_client=%s", whatsapp_id, sessao.existing_client)
     return sessao
 
 
