@@ -172,7 +172,7 @@ async def _chats_por_label(nome_label: str) -> set[str]:
     return contatos
 
 
-async def atualizar_cache() -> None:
+async def atualizar_cache(force: bool = False) -> None:
     global _cache, _ultima_atualizacao, _inicializado, _funcionando
 
     if not settings.openwa_api_key or not settings.openwa_api_url:
@@ -184,6 +184,11 @@ async def atualizar_cache() -> None:
         return
 
     async with _lock:
+        now = datetime.now()
+        if not force and _ultima_atualizacao and (now - _ultima_atualizacao).total_seconds() < CACHE_TTL_SECONDS:
+            return
+        if force and _ultima_atualizacao and (now - _ultima_atualizacao).total_seconds() < 3:
+            return
         contatos = await _chats_por_label(NOVO_CLIENTE_LABEL)
         _cache = contatos
         _ultima_atualizacao = datetime.now()
@@ -198,9 +203,9 @@ async def atualizar_cache() -> None:
 async def verificar_label(whatsapp_id: str) -> bool:
     """Verifica se um contato tem a etiqueta 'NOVO CLIENTE'.
 
-    Se o cache estiver desatualizado, atualiza sincronamente antes
-    de responder — garante que labels recem-adicionadas pelo admin
-    sejam detectadas na proxima mensagem do cliente.
+    Two-tier:
+      1. Cache hit → resposta instantanea
+      2. Cache miss → força atualizacao sincrona e re-tenta
     """
     global _ultima_atualizacao, _inicializado
 
@@ -209,15 +214,17 @@ async def verificar_label(whatsapp_id: str) -> bool:
         return False
 
     if not _inicializado:
-        await atualizar_cache()
+        await atualizar_cache(force=True)
 
     if not _funcionando:
         return False
 
-    if not _ultima_atualizacao or (datetime.now() - _ultima_atualizacao).total_seconds() > CACHE_TTL_SECONDS:
-        await atualizar_cache()
-
     raw = _extrair_digitos(whatsapp_id)
+
+    if raw in _cache:
+        return True
+
+    await atualizar_cache(force=True)
     return raw in _cache
 
 
