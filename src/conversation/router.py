@@ -356,15 +356,30 @@ async def _obter_ou_criar_sessao(whatsapp_id: str) -> SessionState:
     sessao = await carregar_sessao(key)
     if sessao is None:
         sessao = SessionState(whatsapp_id=whatsapp_id)
+        tem_historico = False
         try:
             from src.services.whatsapp_openwa import _bot_ja_conectado_antes, verificar_contato_existente
             if _bot_ja_conectado_antes:
-                tem_historico = await verificar_contato_existente(whatsapp_id)
-                if tem_historico:
-                    sessao.existing_client = True
-                    logger.info("Cliente %s identificado como antigo via OpenWA", whatsapp_id)
+                tem_historico = await verificar_contato_existente(whatsapp_id) or False
         except Exception:
             pass
+
+        try:
+            from src.services.whatsapp_labels import verificar_label, adicionar_label, NOVO_CLIENTE_LABEL
+            tem_label = await verificar_label(whatsapp_id)
+            if tem_label:
+                sessao.existing_client = False
+                logger.info("Cliente %s tem label '%s' — tratando como novo", whatsapp_id, NOVO_CLIENTE_LABEL)
+            elif tem_historico:
+                sessao.existing_client = True
+                logger.info("Cliente %s sem label mas com histórico — tratando como antigo", whatsapp_id)
+            else:
+                await adicionar_label(whatsapp_id)
+                sessao.existing_client = False
+                logger.info("Cliente %s é novo — label '%s' adicionada", whatsapp_id, NOVO_CLIENTE_LABEL)
+        except Exception:
+            if tem_historico:
+                sessao.existing_client = True
     else:
         sessao.whatsapp_id = whatsapp_id
         if sessao.status == SessionStatus.PAUSADO:
