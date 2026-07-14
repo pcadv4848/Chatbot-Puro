@@ -467,6 +467,9 @@ async def processar_mensagem_texto(whatsapp_id: str, texto: str, admin_cmd: bool
         await _salvar_e_enviar(sessao, whatsapp_id, resume_msg)
         return
 
+    if is_admin and sessao.existing_client:
+        sessao.existing_client = False
+
     sessao.conversa.append({"role": "user", "content": texto})
 
     resposta = await processar(texto, sessao)
