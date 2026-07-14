@@ -98,6 +98,7 @@ class Sessao(Base):
         Uuid(), ForeignKey("clientes.id"), nullable=True, index=True
     )
     status = Column(String, nullable=False, default="classificando", index=True)
+    human_attending = Column(String, nullable=False, default="false")
     tipo_beneficio = Column(String, nullable=True)
     esfera = Column(String, nullable=True)
     ultima_atividade = Column(

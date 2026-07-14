@@ -253,8 +253,9 @@ async def _processar_ia(texto: str, sessao: SessionState) -> str:
         return MENSAGEM_ERRO_IA
 
     sessao.step += 1
-    if sessao.step > 3:
+    if sessao.step > _MAX_TENTATIVAS_CLASSIFICACAO:
         sessao.human_attending = True
+        sessao.existing_client = True
         sessao.status = SessionStatus.AGUARDANDO_ADVOGADO
         await salvar_sessao(sessao)
         return MENSAGEM_HUMANO.format(beneficio="Benefício")
@@ -287,6 +288,7 @@ async def _processar_ia(texto: str, sessao: SessionState) -> str:
             await salvar_sessao(sessao)
             if sessao.status == SessionStatus.AGUARDANDO_ADVOGADO:
                 sessao.human_attending = True
+                sessao.existing_client = True
                 sessao.step = 0
                 await salvar_sessao(sessao)
                 beneficio = BENEFICIO_NOME.get(sessao.tipo_beneficio or "outro", "Benefício")
@@ -444,6 +446,7 @@ async def _processar_classificando(texto: str, sessao: SessionState) -> str:
         if not sessao.documentos_faltantes:
             sessao.documentos_faltantes = ["RG", "CPF", "Comprovante de endereço"]
         sessao.human_attending = True
+        sessao.existing_client = True
         sessao.status = SessionStatus.AGUARDANDO_ADVOGADO
         await salvar_sessao(sessao)
         beneficio = BENEFICIO_NOME.get(sessao.tipo_beneficio or "outro", "Benefício")
@@ -456,6 +459,7 @@ async def _processar_classificando(texto: str, sessao: SessionState) -> str:
 
     if sessao.step > _MAX_TENTATIVAS_CLASSIFICACAO:
         sessao.human_attending = True
+        sessao.existing_client = True
         sessao.status = SessionStatus.AGUARDANDO_ADVOGADO
         sessao.motivo_pausa = "nao foi possivel identificar o beneficio"
         await salvar_sessao(sessao)
@@ -568,6 +572,7 @@ async def _processar_trafego_pago(texto: str, sessao: SessionState) -> str:
     sessao.step = 0
     sessao.trafego_pago = False
     sessao.human_attending = True
+    sessao.existing_client = True
     sessao.status = SessionStatus.AGUARDANDO_ADVOGADO
     await salvar_sessao(sessao)
 

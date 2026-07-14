@@ -113,6 +113,7 @@ def _sessao_para_model(sessao: SessionState) -> dict:
     return {
         "whatsapp_id": sessao.whatsapp_id,
         "status": sessao.status.value,
+        "human_attending": str(sessao.human_attending).lower(),
         "tipo_beneficio": sessao.tipo_beneficio,
         "esfera": sessao.esfera,
         "ultima_atividade": (
@@ -135,6 +136,16 @@ def _model_para_sessao(model: SessaoModel) -> SessionState:
     sessao.esfera = model.esfera
     if model.ultima_atividade:
         sessao.ultima_atividade = model.ultima_atividade.isoformat()
+
+    if model.human_attending == "true":
+        sessao.human_attending = True
+
+    if sessao.status in (
+        SessionStatus.AGUARDANDO_ADVOGADO,
+        SessionStatus.CONCLUIDO,
+    ):
+        sessao.human_attending = True
+
     return sessao
 
 
