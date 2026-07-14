@@ -201,6 +201,14 @@ async def processar(texto: str, sessao: SessionState) -> str:
     if sessao.existing_client:
         return await _processar_humano(texto, sessao)
 
+    if sessao.status == SessionStatus.CONCLUIDO:
+        sessao.status = SessionStatus.CLASSIFICANDO
+        sessao.existing_client = False
+        sessao.human_attending = False
+        from src.conversation.storage import salvar_sessao
+        await salvar_sessao(sessao)
+        logger.info("Sessão CONCLUIDO reativada para nova mensagem")
+
     if sessao.trafego_pago and sessao.status == SessionStatus.CLASSIFICANDO:
         sessao.status = SessionStatus.TRAFEGO_PAGO
         from src.conversation.storage import salvar_sessao
