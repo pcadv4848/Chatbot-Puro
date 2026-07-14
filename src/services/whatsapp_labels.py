@@ -52,135 +52,124 @@ def _extrair_digitos(wa_id: str) -> str:
 
 
 async def _listar_labels() -> list[dict] | None:
-    """Tenta obter todas as etiquetas via OpenWA REST API."""
+    """Obtém todas as etiquetas via OpenWA REST API (GET /labels)."""
     session_id = await _get_session_id()
     if not session_id:
         return None
     base = _get_base_url()
     headers = _get_headers()
 
-    urls = [
-        # Pattern 1: GET /sessions/{id}/labels (Easy API estruturado)
-        f"{base}/sessions/{session_id}/labels",
-        # Pattern 2: GET /sessions/{id}/labels/list
-        f"{base}/sessions/{session_id}/labels/list",
-        # Pattern 3: POST /sessions/{id}/getAllLabels (middleware-style)
-    ]
-
     async with httpx.AsyncClient(timeout=10.0) as client:
-        for url in urls:
+        # Tenta GET /labels (Easy API) — confirmado funcional
+        for url in [
+            f"{base}/sessions/{session_id}/labels",
+            f"{base}/sessions/{session_id}/labels/list",
+        ]:
             try:
                 resp = await client.get(url, headers=headers)
+                logger.info("GET %s -> %s", url, resp.status_code)
                 if resp.status_code == 200:
                     data = resp.json()
+                    logger.info("Resposta /labels: %s", json.dumps(data, ensure_ascii=False)[:1000])
                     if isinstance(data, list):
                         return data
-                    if isinstance(data, dict):
-                        if "data" in data:
-                            return data["data"]
-                elif resp.status_code == 404:
-                    continue
-                elif resp.status_code >= 400:
-                    logger.debug("GET %s retornou %s", url, resp.status_code)
-                    continue
+                    if isinstance(data, dict) and "data" in data:
+                        return data["data"]
             except Exception as e:
-                logger.debug("GET %s falhou: %s", url, e)
-                continue
+                logger.warning("GET %s falhou: %s", url, e)
 
-        # Tentativa POST /getAllLabels
+        # Fallback: POST /getAllLabels
         try:
             resp = await client.post(
                 f"{base}/sessions/{session_id}/getAllLabels",
-                headers=headers,
-                json={},
-                timeout=10,
+                headers=headers, json={}, timeout=10,
             )
+            logger.info("POST /getAllLabels -> %s", resp.status_code)
             if resp.status_code == 200:
                 data = resp.json()
+                logger.info("Resposta /getAllLabels: %s", json.dumps(data, ensure_ascii=False)[:1000])
                 if isinstance(data, list):
                     return data
                 if isinstance(data, dict) and "data" in data:
                     return data["data"]
         except Exception as e:
-            logger.debug("POST getAllLabels falhou: %s", e)
+            logger.warning("POST getAllLabels falhou: %s", e)
 
     return None
 
 
 async def _chats_por_label(nome_label: str) -> set[str]:
-    """Obtém contatos com uma etiqueta específica via OpenWA."""
+    """Obtém contatos com uma etiqueta específica via OpenWA.
+
+    Fluxo:
+      1. GET /labels → obtem ID numerico da label pelo nome
+      2. GET /labels/{id}/chats → obtem contatos com aquela label
+    """
     session_id = await _get_session_id()
     if not session_id:
         logger.warning("_chats_por_label: sem session_id")
         return set()
+
     base = _get_base_url()
     headers = _get_headers()
-    contatos: set[str] = set()
 
-    from urllib.parse import quote
-    label_encoded = quote(nome_label, safe="")
+    # 1. Obter todas as labels para achar o ID da que queremos
+    labels = await _listar_labels()
+    if not labels:
+        logger.warning("_chats_por_label: _listar_labels retornou None")
+        return set()
 
-    # Tenta variacoes de case do nome da label
-    variacoes_label = [nome_label, nome_label.lower(), nome_label.title()]
+    label_id: str | None = None
+    for label in labels:
+        nome = label.get("name", "").strip()
+        if nome.upper() == nome_label.upper():
+            label_id = str(label.get("id", ""))
+            logger.info("Label '%s' encontrada: id=%s, payload=%s", nome, label_id,
+                        json.dumps(label, ensure_ascii=False)[:500])
+            break
 
-    # Tentativa 1: POST /getChatsByLabel
+    if not label_id:
+        logger.warning("_chats_por_label: label '%s' nao encontrada entre %d labels",
+                       nome_label, len(labels))
+        return set()
+
+    # 2. Buscar contatos com esta label via GET /labels/{id}/chats
     async with httpx.AsyncClient(timeout=10.0) as client:
         for tentativa_url in [
-            f"{base}/sessions/{session_id}/getChatsByLabel",
-            f"{base}/sessions/{session_id}/labels/chats-by-label",
-            f"{base}/sessions/{session_id}/labels/{label_encoded}/chats",
+            f"{base}/sessions/{session_id}/labels/{label_id}/chats",
+            f"{base}/sessions/{session_id}/labels/{label_id}/contacts",
         ]:
-            for label_variacao in variacoes_label:
-                try:
-                    payload = {"args": [label_variacao], "label": label_variacao, "name": label_variacao}
-                    resp = await client.post(tentativa_url, headers=headers, json=payload, timeout=10)
-                    logger.debug("POST %s (label=%s) -> %s", tentativa_url, label_variacao, resp.status_code)
-                    if resp.status_code == 200:
-                        data = resp.json()
-                        logger.debug("Resposta OpenWA: %s", json.dumps(data, ensure_ascii=False)[:500])
-                        chats: list = []
-                        if isinstance(data, list):
-                            chats = data
-                        elif isinstance(data, dict):
-                            raw = data.get("items") or data.get("data") or data.get("result") or []
-                            if isinstance(raw, dict):
-                                raw = raw.get("contacts") or raw.get("chats") or raw.get("list") or raw.get("items") or []
-                            if isinstance(raw, list):
-                                chats = raw
-                        for chat in chats:
-                            cid = chat.get("id", "") or chat.get("jid", "") or chat.get("chatId", "") or chat.get("remoteJid", "") or ""
-                            if cid:
-                                contatos.add(_extrair_digitos(cid))
-                        if contatos:
-                            logger.info("_chats_por_label: %d contatos encontrados via %s", len(contatos), tentativa_url)
-                            return contatos
-                except Exception as e:
-                    logger.debug("POST %s (label=%s) falhou: %s", tentativa_url, label_variacao, e)
+            try:
+                resp = await client.get(tentativa_url, headers=headers, timeout=10)
+                logger.info("GET %s -> %s", tentativa_url, resp.status_code)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    logger.info("Resposta chats da label %s: %s", label_id,
+                                json.dumps(data, ensure_ascii=False)[:1000])
+                    contatos: set[str] = set()
+                    chats_raw: list = []
+                    if isinstance(data, list):
+                        chats_raw = data
+                    elif isinstance(data, dict):
+                        tmp = data.get("data") or data.get("items") or data.get("chats") or data.get("contacts") or data.get("result") or []
+                        if isinstance(tmp, list):
+                            chats_raw = tmp
+                        elif isinstance(tmp, dict):
+                            chats_raw = tmp.get("contacts") or tmp.get("chats") or tmp.get("list") or []
+                    for chat in chats_raw:
+                        cid = (chat.get("id", "") or chat.get("jid", "") or
+                               chat.get("chatId", "") or chat.get("remoteJid", "") or
+                               chat.get("participant", "") or "")
+                        if cid:
+                            contatos.add(_extrair_digitos(cid))
+                    if contatos:
+                        logger.info("_chats_por_label: %d contatos com label '%s'", len(contatos), nome_label)
+                        return contatos
+            except Exception as e:
+                logger.warning("GET %s falhou: %s", tentativa_url, e)
 
-    # Tentativa 2: extrair de getAllLabels
-    logger.debug("_chats_por_label: tentando fallback getAllLabels")
-    labels = await _listar_labels()
-    if labels:
-        logger.debug("getAllLabels retornou %d labels: %s", len(labels), json.dumps(labels, ensure_ascii=False)[:500])
-        for label in labels:
-            nome_label_api = label.get("name", "").strip()
-            if nome_label_api.upper() == nome_label.upper():
-                logger.debug("Label '%s' encontrada em getAllLabels", nome_label_api)
-                # Tenta varios campos que podem conter contatos
-                items = label.get("items") or label.get("contacts") or label.get("chats") or label.get("data") or []
-                for item in items:
-                    cid = item.get("id", "") or item.get("jid", "") or item.get("chatId", "") or item.get("remoteJid", "") or ""
-                    if cid:
-                        contatos.add(_extrair_digitos(cid))
-                if contatos:
-                    logger.info("_chats_por_label: %d contatos via getAllLabels", len(contatos))
-                    return contatos
-                logger.debug("Label '%s' encontrada mas sem contatos no payload", nome_label_api)
-                break
-
-    if not contatos:
-        logger.warning("_chats_por_label: NENHUM contato encontrado para label '%s'", nome_label)
-    return contatos
+    logger.warning("_chats_por_label: nenhum contato encontrado para label '%s' (id=%s)", nome_label, label_id)
+    return set()
 
 
 async def atualizar_cache(force: bool = False) -> None:
