@@ -52,6 +52,7 @@ async def processar_admin_commands(texto: str, sessao: SessionState, admin_cmd: 
     if texto == "BOT.":
         sessao.human_attending = False
         sessao.existing_client = False
+        sessao.step = 0
         sessao.status = SessionStatus.CLASSIFICANDO
         from src.conversation.storage import salvar_sessao
         await salvar_sessao(sessao)

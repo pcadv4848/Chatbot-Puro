@@ -25,7 +25,7 @@ from src.services.transcricao import transcrever_audio_async, disponivel as whis
 from src.services.whatsapp_openwa import _ultimos_envios
 
 from src.conversation.jid_utils import session_key as _session_key, extrair_whatsapp_id as _extrair_whatsapp_id, mesmo_telefone
-from src.conversation.admin_commands import processar_admin_commands as _admin_commands, set_storage_dir as _set_cmd_storage_dir, ADMIN_INPUTS as _ADMIN_INPUTS
+from src.conversation.admin_commands import processar_admin_commands as _admin_commands, set_storage_dir as _set_cmd_storage_dir
 
 logger = logging.getLogger(__name__)
 
@@ -241,12 +241,6 @@ async def webhook_whatsapp(request: Request):
                     body = msg.get("body", "")
                     midia_id = msg.get("midia_id")
                     admin_cmd = msg.get("admin_cmd", False)
-                    _cmd_from_body = False
-
-                    if not admin_cmd and msg_type == "text" and body:
-                        if body.strip().upper() in {c.upper() for c in _ADMIN_INPUTS}:
-                            admin_cmd = True
-                            _cmd_from_body = True
 
                     if msg_id and whatsapp_id:
                         sessao = await _obter_ou_criar_sessao(whatsapp_id)
@@ -276,11 +270,11 @@ async def webhook_whatsapp(request: Request):
                         continue
 
                     if msg_type == "text" and body:
+                        admin_cmd = msg.get("admin_cmd", False)
                         ativar_silencioso = msg.get("_ativar_silencioso", False)
                         await asyncio.wait_for(
                             processar_mensagem_texto(whatsapp_id, body, admin_cmd=admin_cmd,
-                                                     ativar_silencioso=ativar_silencioso,
-                                                     _cmd_from_body=_cmd_from_body),
+                                                     ativar_silencioso=ativar_silencioso),
                             timeout=120,
                         )
                     elif msg_type in ("image", "document") and midia_id:
@@ -440,7 +434,7 @@ async def _verificar_inatividade(sessao: SessionState, whatsapp_id: str) -> Opti
 
 
 async def processar_mensagem_texto(whatsapp_id: str, texto: str, admin_cmd: bool = False,
-                                   ativar_silencioso: bool = False, _cmd_from_body: bool = False):
+                                   ativar_silencioso: bool = False):
     sessao = await _obter_ou_criar_sessao(whatsapp_id)
 
     admin_id = settings.admin_whatsapp or _bot_phone_number or ""
@@ -453,7 +447,7 @@ async def processar_mensagem_texto(whatsapp_id: str, texto: str, admin_cmd: bool
     if cmd_resposta is not None:
         sessao.conversa.append({"role": "user", "content": texto})
         sessao.conversa.append({"role": "assistant", "content": cmd_resposta})
-        if admin_cmd and not is_admin and not _cmd_from_body:
+        if admin_cmd and not is_admin:
             logger.info("Admin cmd via message.sent: %s na sessão %s", texto, whatsapp_id)
             await salvar_sessao(sessao)
         else:
