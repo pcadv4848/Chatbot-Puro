@@ -33,7 +33,14 @@ class SessionState:
     ultima_atividade: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     ocr_retry_count: int = 0
     motivo_pausa: Optional[str] = None
+    signing_url: Optional[str] = None
+    zapsign_documento_id: Optional[str] = None
+    documentos_gerados: list = field(default_factory=list)
+    assinado_em: Optional[str] = None
+    rascunho_rural_text: Optional[str] = None
+    periodos_trabalho_rural: list = field(default_factory=list)
     processed_message_ids: list = field(default_factory=list)
+    processed_zapsign_events: list = field(default_factory=list)
     trafego_pago: bool = True
     resumo_caso: str = ""
     historico_perguntas: list = field(default_factory=list)

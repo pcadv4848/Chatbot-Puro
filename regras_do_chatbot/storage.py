@@ -1,3 +1,10 @@
+"""Persistência de sessões — dual mode: PostgreSQL (primário) + JSON (fallback).
+
+Fluxo:
+  1. Tenta DB primeiro (async via SQLAlchemy)
+  2. Se DB indisponível, cai no JSON file storage (sync)
+  3. Sessões são mantidas em memória (sessoes_ativas) para acesso rápido
+"""
 import json
 import logging
 import threading
@@ -110,6 +117,7 @@ def _desserializar_json(dados: dict) -> SessionState:
 # ── Conversão SessionState ↔ SessaoModel ──
 
 def _sessao_para_model(sessao: SessionState) -> dict:
+    """Converte SessionState para dict do modelo Sessao."""
     return {
         "whatsapp_id": sessao.whatsapp_id,
         "status": sessao.status.value,
@@ -124,6 +132,7 @@ def _sessao_para_model(sessao: SessionState) -> dict:
 
 
 def _model_para_sessao(model: SessaoModel) -> SessionState:
+    """Converte SessaoModel para SessionState."""
     estado = model.estado_json or {}
     sessao = _desserializar_json(estado)
     sessao.whatsapp_id = model.whatsapp_id
@@ -141,6 +150,7 @@ def _model_para_sessao(model: SessaoModel) -> SessionState:
 # ── Operações DB (async) ──
 
 async def _salvar_db(sessao: SessionState) -> bool:
+    """Salva sessão no PostgreSQL. Retorna True se ok, False se falhou."""
     try:
         dados = _sessao_para_model(sessao)
         async with async_session() as db:
@@ -161,6 +171,7 @@ async def _salvar_db(sessao: SessionState) -> bool:
 
 
 async def _carregar_db(whatsapp_id: str) -> Optional[SessionState]:
+    """Carrega sessão do PostgreSQL. Retorna None se não existir ou falhar."""
     try:
         async with async_session() as db:
             result = await db.execute(
@@ -176,6 +187,8 @@ async def _carregar_db(whatsapp_id: str) -> Optional[SessionState]:
 
 
 async def _listar_arquivaveis_db() -> tuple[list[str], bool]:
+    """Lista WhatsApp IDs de sessões inativas no DB.
+    Retorna (ids, sucesso) — sucesso=False indica falha de conexão."""
     try:
         agora = datetime.now(timezone.utc)
         limite = agora.timestamp() - ARCHIVE_AFTER_SECONDS
@@ -200,6 +213,8 @@ async def _listar_arquivaveis_db() -> tuple[list[str], bool]:
 
 
 async def _carregar_todas_db() -> tuple[dict[str, SessionState], bool]:
+    """Carrega todas as sessões não-arquivadas do DB.
+    Retorna (sessoes, sucesso) — sucesso=False indica falha de conexão."""
     try:
         async with async_session() as db:
             result = await db.execute(
@@ -286,9 +301,10 @@ def _carregar_todas_json() -> dict[str, SessionState]:
     return sessoes
 
 
-# ── API pública ──
+# ── API pública (async — DB primário, JSON fallback) ──
 
 async def salvar_sessao(sessao: SessionState) -> None:
+    """Salva sessão: tenta DB, fallback JSON."""
     sessao.ultima_atividade = datetime.now(timezone.utc).isoformat()
     ok = await _salvar_db(sessao)
     if not ok:
@@ -296,6 +312,7 @@ async def salvar_sessao(sessao: SessionState) -> None:
 
 
 async def carregar_sessao(whatsapp_id: str) -> Optional[SessionState]:
+    """Carrega sessão: tenta DB, fallback JSON."""
     sessao = await _carregar_db(whatsapp_id)
     if sessao is None:
         sessao = _carregar_json(whatsapp_id)
@@ -303,6 +320,7 @@ async def carregar_sessao(whatsapp_id: str) -> Optional[SessionState]:
 
 
 async def listar_sessoes_arquivaveis() -> list[str]:
+    """Lista IDs de sessões inativas: tenta DB, fallback JSON."""
     ids, db_ok = await _listar_arquivaveis_db()
     if not db_ok:
         ids = _listar_arquivaveis_json()
@@ -310,6 +328,7 @@ async def listar_sessoes_arquivaveis() -> list[str]:
 
 
 async def arquivar_sessoes_inativas(sessoes_ativas: dict[str, SessionState]) -> None:
+    """Arquiva sessões inativas tanto em memória quanto no DB/JSON."""
     for whatsapp_id in await listar_sessoes_arquivaveis():
         if whatsapp_id in sessoes_ativas:
             sessao = sessoes_ativas[whatsapp_id]
@@ -326,11 +345,13 @@ async def arquivar_sessoes_inativas(sessoes_ativas: dict[str, SessionState]) -> 
 
 
 async def carregar_todas_sessoes() -> dict[str, SessionState]:
+    """Carrega todas as sessões não-arquivadas: tenta DB, fallback JSON."""
     sessoes, db_ok = await _carregar_todas_db()
     if not db_ok:
         sessoes = _carregar_todas_json()
     return sessoes
 
 
+# ── Aliases backward-compat para testes ──
 _serializar = _serializar_json
 _desserializar = _desserializar_json

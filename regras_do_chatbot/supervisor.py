@@ -1,3 +1,8 @@
+"""Agente supervisor que orquestra a conversa com o cliente.
+
+Modo IA (DeepSeek > Verboo > Gemini > Claude): usa LangChain + LLM para análise inteligente.
+Modo fallback: usa máquina de estados + classificação por palavras-chave.
+"""
 import asyncio
 import hashlib
 import json
@@ -48,7 +53,7 @@ from src.agents.extraction import (
     parecer_dado as _parece_dado,
 )
 
-# ── Inicializar LLM (DeepSeek > Verboo > Gemini > Claude) ──
+# ── Inicializar LLM (DeepSeek > Verboo > Gemini > Claude > fallback) ──
 _model = None
 _model_with_tools = None
 MODO_IA = False
@@ -129,7 +134,9 @@ def _obter_creds_drive() -> str:
 async def _upload_docs_para_drive(documentos: list[dict], dados_cliente: dict) -> None:
     """Faz upload dos documentos gerados para o Google Drive (best-effort)."""
     creds = _obter_creds_drive()
-    if not creds or not documentos:
+    if not creds:
+        return
+    if not documentos:
         return
     try:
         from src.services.drive import upload_para_drive
@@ -179,6 +186,9 @@ async def _processar_humano(texto: str, sessao: SessionState) -> str:
     return SILENT
 
 
+
+
+
 # ═══════════════════════════════════════════════════════════
 #  Ponto de entrada principal
 # ═══════════════════════════════════════════════════════════
@@ -188,9 +198,11 @@ async def processar(texto: str, sessao: SessionState) -> str:
     if sessao.human_attending:
         return await _processar_humano(texto, sessao)
 
+    # Defesa em profundidade: cliente existente nunca recebe resposta da IA
     if sessao.existing_client:
         return await _processar_humano(texto, sessao)
 
+    # Fluxo de tráfego-pago tem prioridade (válido para IA e fallback)
     if sessao.trafego_pago and sessao.status == SessionStatus.CLASSIFICANDO:
         sessao.status = SessionStatus.TRAFEGO_PAGO
         from src.conversation.storage import salvar_sessao
@@ -210,6 +222,7 @@ async def processar(texto: str, sessao: SessionState) -> str:
 # ═══════════════════════════════════════════════════════════
 
 async def _processar_ia(texto: str, sessao: SessionState) -> str:
+    """Usa IA (DeepSeek) + tools para processar a mensagem."""
     from langchain_core.messages import ToolMessage
     from src.conversation.storage import salvar_sessao
 
@@ -217,6 +230,8 @@ async def _processar_ia(texto: str, sessao: SessionState) -> str:
 
     @tool
     def classificar_beneficio(texto_cliente: str) -> str:
+        """Classifica o tipo de benefício previdenciário com base no texto do cliente.
+        Retorna JSON com tipo, esfera, sub_tipo e docs_necessarios."""
         return json.dumps(classificar(texto_cliente), ensure_ascii=False)
 
     tools = [classificar_beneficio, extrair_ocr_tool]
@@ -252,6 +267,7 @@ async def _processar_ia(texto: str, sessao: SessionState) -> str:
             return MENSAGEM_QUOTA_EXCEDIDA
         return MENSAGEM_ERRO_IA
 
+    # Contador de chamadas IA sem classificar — força handoff após 3 tentativas
     sessao.step += 1
     if sessao.step > 3:
         sessao.human_attending = True
@@ -259,6 +275,7 @@ async def _processar_ia(texto: str, sessao: SessionState) -> str:
         await salvar_sessao(sessao)
         return MENSAGEM_HUMANO.format(beneficio="Benefício")
 
+    # Executar tool calls (máx 2 iterações: classificar + OCR)
     for _ in range(2):
         if not hasattr(response, "tool_calls") or not response.tool_calls:
             break
@@ -310,12 +327,17 @@ async def _processar_ia(texto: str, sessao: SessionState) -> str:
             ultimo_conteudo = messages[-1].content if hasattr(messages[-1], "content") else ""
             return str(ultimo_conteudo) if ultimo_conteudo else MENSAGEM_ERRO_IA
 
+    # Resposta textual do modelo (sem tools ou apos execução)
     if hasattr(response, "content") and response.content:
         return response.content
     return MENSAGEM_ERRO_IA
 
 
+
+
+
 async def _atualizar_sessao_por_tool(nome_tool: str, resultado: str, sessao: SessionState):
+    """Atualiza o estado da sessão com base no resultado de uma tool."""
     try:
         dados = json.loads(resultado) if isinstance(resultado, str) else resultado
     except (json.JSONDecodeError, TypeError):
@@ -354,12 +376,22 @@ async def _atualizar_sessao_por_tool(nome_tool: str, resultado: str, sessao: Ses
             else:
                 sessao.ocr_retry_count += 1
 
+    elif nome_tool == "gerar_rascunho_rural_tool":
+        if isinstance(dados, dict) and dados.get("success"):
+            sessao.rascunho_rural_text = dados.get("texto", "")
+            if sessao.tipo_beneficio == "idade_rural":
+                sessao.status = SessionStatus.REVISAO_ADVOGADO
+
 
 # ═══════════════════════════════════════════════════════════
 #  Modo fallback (máquina de estados + palavras-chave)
 # ═══════════════════════════════════════════════════════════
 
+
+
+
 async def _processar_fallback(texto: str, sessao: SessionState) -> str:
+    """Processa com máquina de estados quando IA não está disponível."""
     texto = texto.strip()
 
     if sessao.status == SessionStatus.CLASSIFICANDO:
@@ -426,6 +458,7 @@ async def _processar_fallback(texto: str, sessao: SessionState) -> str:
 # ── Estado: classificando ──
 
 async def _processar_classificando(texto: str, sessao: SessionState) -> str:
+    """Tenta classificar o beneficio com perguntas progressivas."""
     from src.conversation.storage import salvar_sessao
 
     if not sessao.resumo_caso:
@@ -437,10 +470,12 @@ async def _processar_classificando(texto: str, sessao: SessionState) -> str:
     resultado = classificar(sessao.resumo_caso)
     confianca = resultado["confianca"]
 
+    # Atingiu confianca alta E ja passou pelo minimo de perguntas?
     if confianca >= 0.5 and sessao.step >= _MIN_STEPS_PARA_CONCLUIR:
         sessao.tipo_beneficio = resultado["tipo"]
         sessao.esfera = resultado["esfera"]
         sessao.step = 0
+        # Define os documentos que o cliente precisa enviar (fotos)
         if not sessao.documentos_faltantes:
             sessao.documentos_faltantes = ["RG", "CPF", "Comprovante de endereço"]
         sessao.human_attending = True
@@ -454,6 +489,7 @@ async def _processar_classificando(texto: str, sessao: SessionState) -> str:
             "Assim que tiver os dados, começamos a gerar tudo!"
         )
 
+    # Excedeu tentativas sem confianca suficiente?
     if sessao.step > _MAX_TENTATIVAS_CLASSIFICACAO:
         sessao.human_attending = True
         sessao.status = SessionStatus.AGUARDANDO_ADVOGADO
@@ -464,6 +500,7 @@ async def _processar_classificando(texto: str, sessao: SessionState) -> str:
             "ao seu caso. Vamos dar continuidade ao atendimento."
         )
 
+    # Ainda ha perguntas a fazer
     idx_pergunta = min(sessao.step - 1, len(_PERGUNTAS_CLASSIFICACAO) - 1)
     pergunta = _PERGUNTAS_CLASSIFICACAO[idx_pergunta]
     if sessao.step == 1:
@@ -471,7 +508,11 @@ async def _processar_classificando(texto: str, sessao: SessionState) -> str:
     return pergunta
 
 
+
+
+
 def _msg_variada(lista: list[str], sessao: SessionState, **kwargs) -> str:
+    """Retorna uma mensagem variada da lista, baseada no step da sessao."""
     if not lista:
         return ""
     idx = min(sessao.step, len(lista) - 1)
@@ -482,6 +523,7 @@ def _msg_variada(lista: list[str], sessao: SessionState, **kwargs) -> str:
 
 
 async def _processar_confirmando(texto: str, sessao: SessionState) -> str:
+    """Aguarda confirmação do benefício classificado por correspondência difusa."""
     from src.conversation.storage import salvar_sessao
 
     if _verificar_sim(texto):
@@ -525,6 +567,13 @@ async def _processar_confirmando(texto: str, sessao: SessionState) -> str:
 # ── Estado: trafego_pago ──
 
 async def _processar_trafego_pago(texto: str, sessao: SessionState) -> str:
+    """Fluxo de atendimento mínimo para leads de trafego pago.
+
+    Etapas (no máximo 3 interações):
+      0: saudação + pedir nome
+      1: coletar história
+      2: classificar + finalizar
+    """
     from src.conversation.storage import salvar_sessao
     t = texto.strip()
 
@@ -556,6 +605,7 @@ async def _processar_trafego_pago(texto: str, sessao: SessionState) -> str:
         await salvar_sessao(sessao)
         return _msg_variada(_TRAFEGO_HISTORIA, sessao, nome=nome)
 
+    # Step 2: história + classificar + finalizar
     sessao.resumo_caso += f"Historia: {t}\n"
     sessao.historico_perguntas.append({"pergunta": "historia", "resposta": t})
     nome = sessao.dados_cliente.get("nome", "voce")
@@ -578,6 +628,7 @@ async def _processar_trafego_pago(texto: str, sessao: SessionState) -> str:
 # ── Estado: coletando_dados ──
 
 async def _processar_coleta_dados(texto: str, sessao: SessionState) -> str:
+    """Extrai campo da mensagem, salva e pergunta próximo."""
     from src.conversation.storage import salvar_sessao
 
     _detectar_dificuldade(texto, sessao)
@@ -593,7 +644,9 @@ async def _processar_coleta_dados(texto: str, sessao: SessionState) -> str:
             perguntas = PERGUNTAS_SIMPLES if sessao.simplify_mode else PERGUNTAS_CAMPOS
             pergunta = perguntas.get(prox, f"Qual seu {prox}?")
             if sessao.simplify_mode:
-                msg = f"Nao consegui entender. {pergunta}"
+                msg = (
+                    f"Nao consegui entender. {pergunta}"
+                )
             else:
                 msg = (
                     f"Não consegui entender. \n\n"
@@ -629,7 +682,7 @@ async def _processar_coleta_dados(texto: str, sessao: SessionState) -> str:
 
         mensagem = "Encontrei alguns problemas nos dados:\n"
         for inc in inconsistencias:
-            mensagem += f"  - {inc}\n"
+            mensagem += f"• {inc}\n"
 
         if sessao.step >= _MAX_TENTATIVAS_CLASSIFICACAO + 1:
             sessao.dados_cliente.pop("cpf", None)
@@ -656,8 +709,15 @@ async def _processar_coleta_dados(texto: str, sessao: SessionState) -> str:
     return MENSAGEM_NAO_ENTENDI
 
 
+
+
+
 def _campos_obrigatorios_faltando(sessao: SessionState,
                                   resultado_validacao: dict | None = None) -> list[str]:
+    """Retorna campos obrigatórios ainda não preenchidos.
+
+    Aceita resultado_validacao pré-computado para evitar re-validação.
+    """
     if resultado_validacao is None:
         from src.agents.tools.validar import validar_dados
         resultado_validacao = validar_dados(sessao.dados_cliente, sessao.tipo_beneficio or "outro")
@@ -665,6 +725,7 @@ def _campos_obrigatorios_faltando(sessao: SessionState,
 
 
 def _detectar_dificuldade(texto: str, sessao: SessionState) -> bool:
+    """Ativa simplify_mode se o usuario mostra sinais de dificuldade."""
     t = texto.strip().lower()
     if any(s in t for s in _SINAIS_DIFICULDADE):
         sessao.simplify_mode = True
@@ -677,6 +738,11 @@ def _detectar_dificuldade(texto: str, sessao: SessionState) -> bool:
 
 def _perguntar_proximo_campo(sessao: SessionState,
                               campos_faltando: list[str] | None = None) -> str:
+    """Pergunta o próximo campo obrigatório que falta.
+
+    Aceita campos_faltando pré-computado para evitar re-validação.
+    Usa linguagem simples se simplify_mode estiver ativo.
+    """
     if campos_faltando is None:
         campos_faltando = _campos_obrigatorios_faltando(sessao)
     if not campos_faltando:
@@ -691,11 +757,12 @@ def _perguntar_proximo_campo(sessao: SessionState,
 # ── Estado: aguardando_doc ──
 
 async def _processar_aguardando_doc(sessao: SessionState) -> str:
+    """Informa quais documentos o cliente precisa enviar (fotos)."""
     from src.conversation.storage import salvar_sessao
 
     if sessao.documentos_faltantes:
         docs_formatados = "\n".join(
-            f"  - {d}" for d in sessao.documentos_faltantes
+            f" {d}" for d in sessao.documentos_faltantes
         )
         await salvar_sessao(sessao)
         return (
@@ -714,6 +781,7 @@ async def _processar_aguardando_doc(sessao: SessionState) -> str:
 
 
 async def processar_midia(sessao: SessionState, midia_id: str) -> str:
+    """Processa o recebimento de uma mídia: roda OCR e atualiza documentos."""
     from src.conversation.storage import salvar_sessao
 
     if sessao.human_attending:
@@ -725,9 +793,11 @@ async def processar_midia(sessao: SessionState, midia_id: str) -> str:
 
     dados_extraidos, msg_ocr, erro_servico, tipo_doc = await processar_midia_ocr(midia_id)
 
+    # ── Erro de serviço (API OCR fora do ar) → tentar novamente ──
     if erro_servico:
         return "Recebi sua imagem!  Vou tentar novamente em alguns instantes."
 
+    # ── Verificar qualidade do OCR ──
     if not dados_extraidos:
         sessao.ocr_retry_count += 1
         if sessao.ocr_retry_count >= _MAX_OCR_RETRY:
@@ -736,9 +806,9 @@ async def processar_midia(sessao: SessionState, midia_id: str) -> str:
                 "Infelizmente não estou conseguindo ler sua imagem mesmo "
                 "após várias tentativas. \n\n"
                 "Pode tentar:\n"
-                "  - Tirar a foto em um local bem iluminado\n"
-                "  - Manter o celular parado e focado\n"
-                "  - Enquadrar todo o documento\n\n"
+                "• Tirar a foto em um local bem iluminado\n"
+                "• Manter o celular parado e focado\n"
+                "• Enquadrar todo o documento\n\n"
                 "Se preferir, pode trazer os documentos pessoalmente "
                 "no escritório que nossos atendentes te ajudam."
             )
@@ -749,6 +819,7 @@ async def processar_midia(sessao: SessionState, midia_id: str) -> str:
             f"Pode tentar novamente? "
         )
 
+    # ── OCR bem-sucedido ──
     sessao.ocr_retry_count = 0
     sessao.dados_cliente.update(dados_extraidos)
 
@@ -774,7 +845,7 @@ async def processar_midia(sessao: SessionState, midia_id: str) -> str:
 
     if sessao.documentos_faltantes:
         docs_formatados = "\n".join(
-            f"  - {d}" for d in sessao.documentos_faltantes
+            f" {d}" for d in sessao.documentos_faltantes
         )
         await salvar_sessao(sessao)
         return f"{msg_ocr}\n\nAinda preciso de:\n{docs_formatados}"
@@ -787,6 +858,7 @@ async def processar_midia(sessao: SessionState, midia_id: str) -> str:
 # ── Estado: gerando ──
 
 async def _processar_gerando(sessao: SessionState, force: bool = False) -> str:
+    """Gera os documentos com os dados coletados."""
     from src.conversation.storage import salvar_sessao
 
     if sessao.zapsign_documento_id:
@@ -795,16 +867,17 @@ async def _processar_gerando(sessao: SessionState, force: bool = False) -> str:
         sessao.zapsign_documento_id = None
         sessao.signing_url = None
 
+    # Validar dados antes de gerar (última verificação) — pulada se force=True
     if not force:
         validacao = validar_dados(sessao.dados_cliente, sessao.tipo_beneficio or "outro")
         if not validacao["valido"]:
             mensagem = "Notei que alguns dados precisam de ajuste antes de gerar os documentos:\n"
             for inc in validacao.get("inconsistencias", []):
-                mensagem += f"  - {inc}\n"
+                mensagem += f"• {inc}\n"
             if validacao.get("campos_faltantes"):
                 mensagem += "\nPreciso também de:\n"
                 for campo in validacao["campos_faltantes"]:
-                    mensagem += f"  - {campo}\n"
+                    mensagem += f"• {campo}\n"
             sessao.status = SessionStatus.COLETANDO_DADOS
             await salvar_sessao(sessao)
             if validacao.get("campos_faltantes"):
@@ -840,6 +913,7 @@ async def _processar_gerando(sessao: SessionState, force: bool = False) -> str:
 
         sessao.documentos_gerados = resultado.get("documentos", [])
 
+        # Salvar resumo do caso em .txt e incluir no upload para Drive
         if sessao.resumo_caso:
             try:
                 pasta = Path(__file__).parent.parent.parent / "output" / nome_pasta
@@ -856,9 +930,36 @@ async def _processar_gerando(sessao: SessionState, force: bool = False) -> str:
                 logger.warning("Erro ao salvar resumo do caso: %s", e)
 
         await _upload_docs_para_drive(sessao.documentos_gerados, sessao.dados_cliente)
-
         docs = resultado.get("documentos", [])
-        nomes = "\n".join(f"  - {d['template']}" for d in docs)
+        nomes = "\n".join(f" {d['template']}" for d in docs)
+
+        if sessao.tipo_beneficio == "idade_rural":
+            from src.agents.tools.rural import gerar_rascunho_rural
+
+            rural_result = await gerar_rascunho_rural.ainvoke({
+                "dados_cliente": sessao.dados_cliente,
+                "periodos_trabalho": sessao.periodos_trabalho_rural,
+            })
+            if rural_result.get("success"):
+                sessao.rascunho_rural_text = rural_result.get("texto", "")
+                sessao.status = SessionStatus.REVISAO_ADVOGADO
+                await salvar_sessao(sessao)
+                return (
+                    f"Documentos gerados com sucesso! \n\n"
+                    f"{nomes}\n\n"
+                    " A petição de aposentadoria rural também foi gerada.\n\n"
+                    "Os documentos serão revisados. "
+                    "Em breve retornamos o contato."
+                )
+            else:
+                erro = rural_result.get("message", "erro desconhecido")
+                sessao.status = SessionStatus.CONCLUIDO
+                await salvar_sessao(sessao)
+                return (
+                    f"Documentos gerados com sucesso! \n\n"
+                    f"{nomes}\n\n"
+                    f" A petição rural não pôde ser gerada: {erro}\n"
+                )
 
         sessao.status = SessionStatus.CONCLUIDO
         msg = f"Documentos gerados com sucesso! \n\n{nomes}\n\n"
@@ -874,6 +975,7 @@ async def _processar_gerando(sessao: SessionState, force: bool = False) -> str:
     else:
         erro_msg = resultado.get("message", "erro desconhecido")
 
+        # Tratamento específico para template não encontrado
         if "Template não encontrado" in erro_msg:
             return (
                 f"Desculpe, um dos documentos necessários não foi encontrado "

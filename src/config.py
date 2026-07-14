@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     whatsapp_api_version: str = "v25.0"
     whatsapp_phone_number_id: str = ""
     whatsapp_waba_id: str = ""
+    meta_webhook_secret: str = ""
 
     # ── WhatsApp via OpenWA ──
     openwa_api_url: str = "http://openwa:2785/api"
@@ -40,10 +41,23 @@ class Settings(BaseSettings):
     # ── Banco de Dados ──
     database_url: str = "sqlite+aiosqlite:///./data/chatbot.db"
 
+    # ── Redis ──
+    redis_url: str = "redis://localhost:6379/0"
+
+    # ── Zapsign (assinatura digital) ──
+    zapsign_api_key: str = ""
+    zapsign_webhook_secret: str = ""
+
     # ── Advogado Responsável ──
     advogado_nome: str = "Escritório Jurídico"
     advogado_email: str = ""
     advogado_whatsapp: str = ""
+
+    # ── S3 / Storage (MinIO ou Cloudflare R2) ──
+    storage_endpoint: str = ""
+    storage_access_key: str = ""
+    storage_secret_key: str = ""
+    storage_bucket: str = "chatbot-docs"
 
     # ── Retry / Tolerância a falhas ──
     retry_max_attempts: int = 3
@@ -63,6 +77,11 @@ class Settings(BaseSettings):
     admin_username: str = "admin"
     admin_password: str = ""
     admin_whatsapp: str = ""
+
+    # ── Google Drive ──
+    gdrive_credentials_file: str = ""
+    gdrive_credentials_json: str = ""
+    gdrive_folder_id: str = ""
 
     # ── Lembretes ──
     reminder_cooldown_days: int = 3

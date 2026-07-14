@@ -1,3 +1,8 @@
+"""Comandos administrativos do chatbot.
+
+Processa comandos enviados pelo administrador via WhatsApp:
+RESETAR., BOT., HUMANO., STATUS., GENERAR_DOCS., LABEL.
+"""
 import logging
 
 from src.conversation.state import SessionState, SessionStatus
@@ -6,7 +11,7 @@ from src.config import settings
 
 logger = logging.getLogger(__name__)
 
-STORAGE_DIR = None
+STORAGE_DIR = None  # will be set by set_storage_dir()
 
 
 def set_storage_dir(path) -> None:
@@ -15,6 +20,7 @@ def set_storage_dir(path) -> None:
 
 
 def _get_bot_phone() -> str:
+    """Obtém o número do bot de router.py (evita duplicar o estado)."""
     try:
         from src.conversation.router import _bot_phone_number
         return _bot_phone_number or ""
@@ -27,6 +33,8 @@ ADMIN_INPUTS = {
     "GENERAR_DOCS.", "LABEL.",
 }
 
+
+# Aliases para comandos administrativos (case-sensitive, exatos)
 ADMIN_ALIASES: dict[str, str] = {
     "Consegue entender?": "HUMANO.",
     "Olá!": "BOT.",
@@ -36,6 +44,7 @@ ADMIN_ALIASES: dict[str, str] = {
 
 
 async def processar_admin_commands(texto: str, sessao: SessionState, admin_cmd: bool = False) -> str | None:
+    """Processa comandos administrativos. Retorna resposta ou None se não for comando."""
     admin_id = settings.admin_whatsapp or _get_bot_phone() or ""
     if not admin_id:
         return None
@@ -62,8 +71,8 @@ async def processar_admin_commands(texto: str, sessao: SessionState, admin_cmd: 
     if texto == "STATUS.":
         att = "humano" if sessao.human_attending else "bot"
         benef = sessao.tipo_beneficio or "nao identificado"
-        docs = "; ".join(d.get("nome", "") for d in sessao.documentos_gerados) or "nenhum"
         dados = "; ".join(f"{k}={v}" for k, v in sessao.dados_cliente.items()) or "nenhum"
+        docs = "; ".join(d.get("nome", "") for d in sessao.documentos_gerados) or "nenhum"
         return (
             f"Status: {sessao.status.value}\n"
             f"Modo: {att}\n"
