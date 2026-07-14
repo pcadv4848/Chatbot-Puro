@@ -181,24 +181,24 @@ QUALIDADE_DICAS = [
 MENSAGEM_NAO_ENTENDI = "Não entendi. Pode repetir? "
 
 MENSAGEM_ERRO_IA = (
-    "Desculpe, estou com dificuldades para processar sua mensagem agora. \n"
-    "Pode tentar novamente em alguns instantes?"
+    "Desculpe, estou com dificuldades para processar sua mensagem agora."
+    " Pode tentar novamente em alguns instantes?"
 )
 
 MENSAGEM_QUOTA_EXCEDIDA = (
-    "Excedemos o limite de uso da IA no momento. \n"
-    "Aguarde alguns instantes e tente novamente."
+    "Excedemos o limite de uso da IA no momento."
+    " Aguarde alguns instantes e tente novamente."
 )
 
 MENSAGEM_FORA_ESCOPO = (
-    "Ola! Pelo que voce descreveu, nao consegui identificar "
-    "qual beneficio se aplica ao seu caso. "
-    "Vamos dar continuidade ao atendimento."
+    "Ola! Pelo que voce descreveu, nao consegui identificar"
+    " qual beneficio se aplica ao seu caso."
+    " Vamos dar continuidade ao atendimento."
 )
 
 MENSAGEM_HUMANO = (
-    "Seu caso sobre *{beneficio}* foi identificado. "
-    "Vamos dar continuidade ao atendimento por aqui mesmo."
+    "Seu caso sobre {beneficio} foi identificado."
+    " Vamos dar continuidade ao atendimento por aqui mesmo."
 )
 
 SILENT = "__SILENT__"

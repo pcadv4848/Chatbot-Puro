@@ -501,12 +501,12 @@ async def _processar_confirmando(texto: str, sessao: SessionState) -> str:
         sessao.step = 0
         msg = (
             f"Ótimo! Vou preparar os documentos para {nome} "
-            f"(via {'administrativa' if esfera == 'adm' else 'judicial'}).\n\n"
-            "Vou precisar de alguns dados seus:"
+            f"(via {'administrativa' if esfera == 'adm' else 'judicial'})."
+            " Vou precisar de alguns dados seus:"
         )
         primeiro = _perguntar_proximo_campo(sessao)
         await salvar_sessao(sessao)
-        return f"{msg}\n\n{primeiro}"
+        return f"{msg} {primeiro}"
 
     if _verificar_nao(texto):
         sessao.tipo_beneficio = None
@@ -520,9 +520,9 @@ async def _processar_confirmando(texto: str, sessao: SessionState) -> str:
             return MENSAGEM_FORA_ESCOPO
         await salvar_sessao(sessao)
         return (
-            "Entendi! Vou tentar de novo.\n\n"
-            "Me conte o que você precisa. Por exemplo: "
-            "auxílio-doença, aposentadoria, pensão ou revisão de benefício."
+            "Entendi! Vou tentar de novo."
+            " Me conte o que você precisa. Por exemplo:"
+            " auxílio-doença, aposentadoria, pensão ou revisão de benefício."
         )
 
     nome = BENEFICIO_NOME.get(sessao.tipo_beneficio or "", "Benefício")
@@ -583,7 +583,7 @@ async def _processar_trafego_pago(texto: str, sessao: SessionState) -> str:
     await salvar_sessao(sessao)
 
     beneficio = BENEFICIO_NOME.get(sessao.tipo_beneficio or "outro", "Benefício")
-    return _msg_variada(_TRAFEGO_FINALIZAR, sessao, nome=nome) + "\n\n" + MENSAGEM_HUMANO.format(beneficio=beneficio)
+    return _msg_variada(_TRAFEGO_FINALIZAR, sessao, nome=nome) + " " + MENSAGEM_HUMANO.format(beneficio=beneficio)
 
 
 # ── Estado: coletando_dados ──
@@ -607,9 +607,9 @@ async def _processar_coleta_dados(texto: str, sessao: SessionState) -> str:
                 msg = f"Nao consegui entender. {pergunta}"
             else:
                 msg = (
-                    f"Não consegui entender. \n\n"
-                    f"{pergunta}\n\n"
-                    f"Se preferir, pode me dizer 'não lembro' ou pedir ajuda."
+                    f"Não consegui entender."
+                    f" {pergunta}"
+                    f" Se preferir, pode me dizer 'não lembro' ou pedir ajuda."
                 )
             if sessao.step < 1:
                 sessao.step += 1
@@ -617,8 +617,8 @@ async def _processar_coleta_dados(texto: str, sessao: SessionState) -> str:
                 return msg
             else:
                 return (
-                    f"Vamos tentar de outro jeito. {pergunta}\n\n"
-                    f"Se não souber, pode pedir pra pular este campo."
+                    f"Vamos tentar de outro jeito. {pergunta}"
+                    f" Se não souber, pode pedir pra pular este campo."
                 )
 
     resultado_validacao = validar_dados(sessao.dados_cliente, sessao.tipo_beneficio or "outro")
@@ -710,13 +710,13 @@ async def _processar_aguardando_doc(sessao: SessionState) -> str:
         )
         await salvar_sessao(sessao)
         return (
-            "Ótimo, dados salvos! \n\n"
-            "Agora preciso que você envie FOTO dos seguintes documentos:\n\n"
-            f"{docs_formatados}\n\n"
-            "Pode enviar as fotos aqui mesmo pelo WhatsApp. \n"
-            "Assim que receber, começo a gerar seus documentos.\n\n"
-            " Dica: Tire a foto em local iluminado, sem flash, "
-            "com o documento bem esticado."
+            "Ótimo, dados salvos! Agora preciso que você envie FOTO"
+            " dos seguintes documentos:\n"
+            f"{docs_formatados}\n"
+            "Pode enviar as fotos aqui mesmo pelo WhatsApp."
+            " Assim que receber, começo a gerar seus documentos."
+            " Dica: Tire a foto em local iluminado, sem flash,"
+            " com o documento bem esticado."
         )
 
     sessao.status = SessionStatus.GERANDO
@@ -744,20 +744,19 @@ async def processar_midia(sessao: SessionState, midia_id: str) -> str:
         if sessao.ocr_retry_count >= _MAX_OCR_RETRY:
             sessao.ocr_retry_count = _MAX_OCR_RETRY
             return (
-                "Infelizmente não estou conseguindo ler sua imagem mesmo "
-                "após várias tentativas. \n\n"
-                "Pode tentar:\n"
-                "  - Tirar a foto em um local bem iluminado\n"
-                "  - Manter o celular parado e focado\n"
-                "  - Enquadrar todo o documento\n\n"
-                "Se preferir, pode trazer os documentos pessoalmente "
-                "no escritório que nossos atendentes te ajudam."
+                "Infelizmente não estou conseguindo ler sua imagem mesmo"
+                " após várias tentativas."
+                " Tente: tirar a foto em local bem iluminado,"
+                " manter o celular parado e focado,"
+                " e enquadrar todo o documento."
+                " Se preferir, pode trazer os documentos pessoalmente"
+                " no escritório que nossos atendentes te ajudam."
             )
 
         dica = _QUALIDADE_DICAS[(sessao.ocr_retry_count - 1) % len(_QUALIDADE_DICAS)]
         return (
-            f"Não consegui ler direito a imagem. {dica}\n\n"
-            f"Pode tentar novamente? "
+            f"Não consegui ler direito a imagem. {dica}"
+            f" Pode tentar novamente? "
         )
 
     sessao.ocr_retry_count = 0
@@ -788,7 +787,7 @@ async def processar_midia(sessao: SessionState, midia_id: str) -> str:
             f"  - {d}" for d in sessao.documentos_faltantes
         )
         await salvar_sessao(sessao)
-        return f"{msg_ocr}\n\nAinda preciso de:\n{docs_formatados}"
+        return f"{msg_ocr} Ainda preciso de:\n{docs_formatados}"
 
     sessao.status = SessionStatus.GERANDO
     await salvar_sessao(sessao)
@@ -860,7 +859,7 @@ async def _processar_gerando(sessao: SessionState, force: bool = False) -> str:
         nomes = "\n".join(f"  - {d['template']}" for d in docs)
 
         sessao.status = SessionStatus.CONCLUIDO
-        msg = f"Documentos gerados com sucesso! \n\n{nomes}\n\n"
+        msg = f"Documentos gerados com sucesso!\n{nomes}"
 
         await salvar_sessao(sessao)
         return msg
@@ -869,13 +868,13 @@ async def _processar_gerando(sessao: SessionState, force: bool = False) -> str:
 
         if "Template não encontrado" in erro_msg:
             return (
-                f"Desculpe, um dos documentos necessários não foi encontrado "
-                f"no sistema.\n\n"
-                "Pode tentar novamente mais tarde? "
+                f"Desculpe, um dos documentos necessários não foi encontrado"
+                f" no sistema."
+                " Pode tentar novamente mais tarde? "
             )
 
         return (
-            "Desculpe, tive um erro ao gerar os documentos: "
-            f"{erro_msg}\n\n"
-            "Pode tentar novamente? "
+            "Desculpe, tive um erro ao gerar os documentos:"
+            f" {erro_msg}."
+            " Pode tentar novamente? "
         )

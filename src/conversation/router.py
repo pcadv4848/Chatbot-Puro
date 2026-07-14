@@ -250,7 +250,8 @@ async def webhook_whatsapp(request: Request):
                             continue
 
                     admin_id = settings.admin_whatsapp or _bot_phone_number or ""
-                    if sessao and sessao.existing_client and _session_key(whatsapp_id) != admin_id and not admin_cmd:
+                    is_admin = admin_id and _session_key(whatsapp_id) == _session_key(admin_id)
+                    if sessao and sessao.existing_client and not is_admin and not admin_cmd:
                         if msg_type == "text" and body:
                             sessao.conversa.append({"role": "user", "content": body})
                             if _detectar_abandono(body):
@@ -414,11 +415,17 @@ async def processar_mensagem_texto(whatsapp_id: str, texto: str, admin_cmd: bool
                                    ativar_silencioso: bool = False):
     sessao = await _obter_ou_criar_sessao(whatsapp_id)
 
+    admin_id = settings.admin_whatsapp or _bot_phone_number or ""
+    is_admin = admin_id and _session_key(whatsapp_id) == _session_key(admin_id)
+
+    if not admin_cmd and is_admin:
+        admin_cmd = True
+
     cmd_resposta = await _admin_commands(texto, sessao, admin_cmd=admin_cmd)
     if cmd_resposta is not None:
         sessao.conversa.append({"role": "user", "content": texto})
         sessao.conversa.append({"role": "assistant", "content": cmd_resposta})
-        if admin_cmd:
+        if admin_cmd and not is_admin:
             logger.info("Admin cmd via message.sent: %s na sessão %s", texto, whatsapp_id)
             await salvar_sessao(sessao)
         else:
