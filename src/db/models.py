@@ -130,8 +130,6 @@ class Documento(Base):
     status = Column(String, nullable=False, default="gerado", index=True)
     path_docx = Column(String, nullable=True)
     path_pdf = Column(String, nullable=True)
-    zapsign_id = Column(String, nullable=True)
-    assinado_em = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )

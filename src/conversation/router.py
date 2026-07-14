@@ -6,12 +6,11 @@ import logging
 import re
 import time
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse, PlainTextResponse
-from src.services.whatsapp import enviar_mensagem
+from src.services.whatsapp import enviar_mensagem, baixar_midia
 from src.conversation.state import SessionState, SessionStatus
 from src.conversation.storage import (
     salvar_sessao,
@@ -24,7 +23,6 @@ from src.agents.supervisor import processar, processar_midia, SILENT
 from src.config import settings
 from src.engine.rate_limit import limiter
 from src.services.transcricao import transcrever_audio_async, disponivel as whisper_disponivel
-from src.services.whatsapp import baixar_midia
 from src.services.whatsapp_openwa import _ultimos_envios
 
 from src.conversation.jid_utils import session_key as _session_key, extrair_whatsapp_id as _extrair_whatsapp_id
@@ -36,7 +34,6 @@ router = APIRouter(prefix="/webhook", tags=["webhooks"])
 
 # Cache em memória do estado das sessões ativas.
 sessoes_ativas: dict[str, SessionState] = {}
-zapsign_doc_index: dict[str, str] = {}  # doc_id → whatsapp_id
 
 # Número do próprio bot (descoberto da sessão OpenWA)
 _bot_phone_number: str | None = None
@@ -45,15 +42,6 @@ _bot_phone_number: str | None = None
 _set_cmd_storage_dir(STORAGE_DIR)
 
 from src.conversation.admin_commands import ADMIN_ALIASES as _ADMIN_ALIASES, ADMIN_INPUTS as _ADMIN_INPUTS
-
-
-def atualizar_indice_zapsign(whatsapp_id: str, doc_id: str | None) -> None:
-    """Atualiza o índice reverso doc_id → whatsapp_id para busca O(1) no webhook."""
-    if doc_id:
-        zapsign_doc_index[doc_id] = whatsapp_id
-    for d, w in list(zapsign_doc_index.items()):
-        if w == whatsapp_id and d != doc_id:
-            zapsign_doc_index.pop(d, None)
 
 
 async def _descobrir_bot_phone() -> str | None:
@@ -531,82 +519,6 @@ async def processar_mensagem_midia(whatsapp_id: str, midia_id: str):
         sessao.conversa.append({"role": "assistant", "content": resposta})
         await _salvar_e_enviar(sessao, whatsapp_id, resposta)
         return
-
-
-@router.post("/zapsign")
-@limiter.limit(settings.rate_limit_webhook)
-async def webhook_zapsign(request: Request):
-    """Recebe confirmação de assinatura do Zapsign."""
-    from src.services.signing import (
-        processar_webhook as processar_zapsign_webhook,
-        verificar_webhook_zapsign,
-    )
-    body = await request.body()
-    sig = request.headers.get("x-zapsign-signature")
-    if not verificar_webhook_zapsign(body, sig):
-        logger.warning("Webhook Zapsign rejeitado: assinatura inválida")
-        raise HTTPException(status_code=403, detail="Assinatura inválida")
-    try:
-        payload = await request.json()
-        evento = processar_zapsign_webhook(payload)
-        logger.info("Zapsign webhook: %s", evento)
-
-        if evento.get("evento") == "assinado":
-            doc_id = evento.get("documento_id", "")
-            signatario = evento.get("signatario", "")
-            assinado_em = evento.get("assinado_em")
-            event_key = f"{doc_id}_{evento.get('evento')}"
-
-            whatsapp_id = zapsign_doc_index.get(doc_id)
-            key = _session_key(whatsapp_id) if whatsapp_id else None
-            sessao = sessoes_ativas.get(key) if key else None
-
-            if not sessao:
-                for s in sessoes_ativas.values():
-                    if s.zapsign_documento_id == doc_id:
-                        sessao = s
-                        break
-
-            if sessao and event_key in sessao.processed_zapsign_events:
-                logger.info("Evento Zapsign %s já processado, ignorando", event_key)
-                return {"status": "ok"}
-
-            if sessao:
-                if sessao.assinado_em:
-                    logger.info("Sessão %s já assinada em %s, ignorando", sessao.whatsapp_id, sessao.assinado_em)
-                    return {"status": "ok"}
-
-                sessao.status = SessionStatus.CONCLUIDO
-                sessao.assinado_em = assinado_em
-
-                if event_key not in sessao.processed_zapsign_events:
-                    sessao.processed_zapsign_events.append(event_key)
-                    if len(sessao.processed_zapsign_events) > 50:
-                        sessao.processed_zapsign_events = sessao.processed_zapsign_events[-25:]
-
-                mensagem = (
-                    f" Documento assinado por {signatario}!\n\n"
-                    "Recebemos sua assinatura digital com sucesso."
-                )
-                if sessao.documentos_gerados:
-                    caminhos = [
-                        d.get("path", "") for d in sessao.documentos_gerados
-                        if d.get("path", "").endswith(".pdf")
-                    ]
-                    if caminhos:
-                        mensagem += "\n\n Seus documentos:\n"
-                        for c in caminhos:
-                            mensagem += f"  - {Path(c).name}\n"
-
-                sessao.conversa.append({"role": "assistant", "content": mensagem})
-                await enviar_mensagem(sessao.whatsapp_id, mensagem)
-                await salvar_sessao(sessao)
-
-        return {"status": "ok"}
-
-    except Exception as e:
-        logger.error("Erro no webhook Zapsign: %s", e)
-        return {"status": "ok"}
 
 
 async def tarefa_arquivamento():

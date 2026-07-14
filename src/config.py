@@ -44,10 +44,6 @@ class Settings(BaseSettings):
     # ── Redis ──
     redis_url: str = "redis://localhost:6379/0"
 
-    # ── Zapsign (assinatura digital) ──
-    zapsign_api_key: str = ""
-    zapsign_webhook_secret: str = ""
-
     # ── Advogado Responsável ──
     advogado_nome: str = "Escritório Jurídico"
     advogado_email: str = ""

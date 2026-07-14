@@ -343,8 +343,6 @@ async def _atualizar_sessao_por_tool(nome_tool: str, resultado: str, sessao: Ses
     elif nome_tool == "gerar_docs":
         if dados.get("success"):
             sessao.status = SessionStatus.CONCLUIDO
-            sessao.signing_url = dados.get("link_assinatura")
-            sessao.zapsign_documento_id = dados.get("documento_id")
             sessao.documentos_gerados = dados.get("documentos", [])
             await _upload_docs_para_drive(sessao.documentos_gerados, sessao.dados_cliente)
 
@@ -802,12 +800,6 @@ async def processar_midia(sessao: SessionState, midia_id: str) -> str:
 async def _processar_gerando(sessao: SessionState, force: bool = False) -> str:
     from src.conversation.storage import salvar_sessao
 
-    if sessao.zapsign_documento_id:
-        if not force:
-            return "Os documentos já foram gerados anteriormente. "
-        sessao.zapsign_documento_id = None
-        sessao.signing_url = None
-
     if not force:
         validacao = validar_dados(sessao.dados_cliente, sessao.tipo_beneficio or "outro")
         if not validacao["valido"]:
@@ -845,12 +837,6 @@ async def _processar_gerando(sessao: SessionState, force: bool = False) -> str:
     })
 
     if resultado.get("success"):
-        sessao.signing_url = resultado.get("link_assinatura")
-        sessao.zapsign_documento_id = resultado.get("documento_id")
-
-        from src.conversation.router import atualizar_indice_zapsign
-        atualizar_indice_zapsign(sessao.whatsapp_id, sessao.zapsign_documento_id)
-
         sessao.documentos_gerados = resultado.get("documentos", [])
 
         if sessao.resumo_caso:
@@ -875,12 +861,6 @@ async def _processar_gerando(sessao: SessionState, force: bool = False) -> str:
 
         sessao.status = SessionStatus.CONCLUIDO
         msg = f"Documentos gerados com sucesso! \n\n{nomes}\n\n"
-
-        if resultado.get("link_assinatura"):
-            msg += (
-                f" Link para assinar: {resultado['link_assinatura']}\n\n"
-                "Após assinar, receberei a confirmação automaticamente."
-            )
 
         await salvar_sessao(sessao)
         return msg
