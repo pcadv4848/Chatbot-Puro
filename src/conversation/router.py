@@ -354,6 +354,14 @@ async def _obter_ou_criar_sessao(whatsapp_id: str) -> SessionState:
         old = sessoes_ativas[key]
         if old.whatsapp_id != whatsapp_id:
             old.whatsapp_id = whatsapp_id
+        if old.existing_client:
+            try:
+                from src.services.whatsapp_labels import verificar_label, NOVO_CLIENTE_LABEL
+                if await verificar_label(whatsapp_id):
+                    old.existing_client = False
+                    logger.info("Cliente %s recebeu label '%s' — reativado", whatsapp_id, NOVO_CLIENTE_LABEL)
+            except Exception:
+                pass
         return old
 
     sessao = await carregar_sessao(key)
@@ -368,18 +376,13 @@ async def _obter_ou_criar_sessao(whatsapp_id: str) -> SessionState:
             pass
 
         try:
-            from src.services.whatsapp_labels import verificar_label, adicionar_label, NOVO_CLIENTE_LABEL
-            tem_label = await verificar_label(whatsapp_id)
-            if tem_label:
+            from src.services.whatsapp_labels import verificar_label, NOVO_CLIENTE_LABEL
+            if await verificar_label(whatsapp_id):
                 sessao.existing_client = False
-                logger.info("Cliente %s tem label '%s' — tratando como novo", whatsapp_id, NOVO_CLIENTE_LABEL)
-            elif tem_historico:
-                sessao.existing_client = True
-                logger.info("Cliente %s sem label mas com histórico — tratando como antigo", whatsapp_id)
+                logger.info("Cliente %s com label '%s' — tratando como novo", whatsapp_id, NOVO_CLIENTE_LABEL)
             else:
-                await adicionar_label(whatsapp_id)
-                sessao.existing_client = False
-                logger.info("Cliente %s é novo — label '%s' adicionada", whatsapp_id, NOVO_CLIENTE_LABEL)
+                sessao.existing_client = True
+                logger.debug("Cliente %s sem label — tratando como antigo", whatsapp_id)
         except Exception:
             if tem_historico:
                 sessao.existing_client = True
@@ -392,6 +395,14 @@ async def _obter_ou_criar_sessao(whatsapp_id: str) -> SessionState:
             sessao.motivo_pausa = None
             sessao.existing_client = False
             logger.info("Sessão arquivada reativada para %s", whatsapp_id)
+        elif sessao.existing_client:
+            try:
+                from src.services.whatsapp_labels import verificar_label, NOVO_CLIENTE_LABEL
+                if await verificar_label(whatsapp_id):
+                    sessao.existing_client = False
+                    logger.info("Cliente %s recebeu label '%s' — reativado", whatsapp_id, NOVO_CLIENTE_LABEL)
+            except Exception:
+                pass
 
     sessoes_ativas[key] = sessao
     return sessao
