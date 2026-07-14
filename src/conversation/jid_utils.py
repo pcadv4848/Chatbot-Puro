@@ -6,7 +6,7 @@ def session_key(jid: str) -> str:
 
 
 def extrair_whatsapp_id(from_field: str) -> str:
-    return from_field.replace("@c.us", "").replace("@s.whatsapp.net", "")
+    return from_field.replace("@c.us", "").replace("@s.whatsapp.net", "").replace("@lid", "")
 
 
 def normalizar_id(whatsapp_id: str) -> str:

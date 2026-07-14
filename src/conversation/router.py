@@ -4,7 +4,6 @@ import hmac
 import json
 import logging
 import re
-import time
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -117,8 +116,7 @@ def _parse_openwa_payload(payload: dict) -> list[dict]:
                 sender = _extrair_whatsapp_id(from_jid)
                 target = _extrair_whatsapp_id(to_jid)
                 admin_id = settings.admin_whatsapp or _bot_phone_number or ""
-                sender_raw = sender.replace("@lid", "")
-                if admin_id and mesmo_telefone(sender_raw, admin_id):
+                if admin_id and mesmo_telefone(sender, admin_id):
                     if body in _ADMIN_INPUTS:
                         return [{"id": data.get("id", ""), "from": target,
                                  "type": "text", "body": body, "admin_cmd": True}]
@@ -223,8 +221,8 @@ async def webhook_whatsapp(request: Request):
         logger.warning("Formato de webhook desconhecido: %s", list(payload.keys())[:3])
         return {"status": "ok"}
 
-    import time as time_module
-    task_id = f"{evento}_{time_module.time()}"
+    import time
+    task_id = f"{evento}_{time.time()}"
     track_entry = {"id": task_id, "inicio": datetime.now(timezone.utc).isoformat(),
                    "mensagens": len(mensagens), "status": "iniciado"}
     _processamento_em_andamento.append(track_entry)
