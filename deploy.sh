@@ -2,10 +2,11 @@
 set -euo pipefail
 
 # ═══════════════════════════════════════════════════════════
-#  deploy.sh — ChatBot Puro
+#  deploy.sh — ChatBot Puro (deploy rapido via SSH)
 #  Uso: ssh user@server 'bash -s' < deploy.sh
 #  Variáveis de ambiente:
 #    SERVER_IP=187.77.235.249  (para links de retorno)
+#    PORT=8000                 (porta do chatbot)
 # ═══════════════════════════════════════════════════════════
 
 SERVER_IP="${SERVER_IP:-}"
@@ -34,19 +35,15 @@ asyncio.run(main())
 "
 
 echo "=== 4. Parando bot antigo ==="
-pkill -f "uvicorn src.main:app" 2>/dev/null || true
-sleep 2
+bash deploy/stop.sh 2>/dev/null || true
 
 echo "=== 5. Iniciando bot ==="
-cd "$INSTALL_DIR"
-source .venv/bin/activate
-nohup uvicorn src.main:app --host 0.0.0.0 --port "$PORT_CHATBOT" --workers 1 > chatbot.log 2>&1 &
-echo $! > chatbot.pid
+bash deploy/start.sh
 
 echo "=== 6. Verificando ==="
 sleep 3
 if pgrep -f "uvicorn src.main:app" > /dev/null; then
-    echo "  ✓ Bot rodando na porta $PORT_CHATBOT (PID: $(cat chatbot.pid 2>/dev/null || echo '?'))"
+    echo "  ✓ Bot rodando na porta $PORT_CHATBOT"
     echo "  ✓ Logs: tail -f $INSTALL_DIR/chatbot.log"
 else
     echo "  ✗ Bot NAO iniciou — veja os logs:"

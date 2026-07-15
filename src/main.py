@@ -57,14 +57,14 @@ async def lifespan(app: FastAPI):
     await iniciar_carregamento_sessoes()
 
     if settings.whatsapp_provider == "openwa" and settings.openwa_api_key:
-        from src.services.whatsapp_openwa import resolver_uuid_sessao
+        from src.services.whatsapp_openwa import resolver_uuid_sessao, detectar_conexao_anterior
+        from src.services.whatsapp import tarefa_heartbeat
         uuid = await resolver_uuid_sessao()
         if uuid:
             logger.info("Session UUID resolvido na inicialização: %s", uuid)
         else:
             logger.warning("Session UUID não encontrado")
 
-    if settings.whatsapp_provider == "openwa" and settings.openwa_api_key:
         webhook_url = f"{settings.app_url}/webhook/whatsapp"
         for tentativa in range(3):
             try:
@@ -78,19 +78,16 @@ async def lifespan(app: FastAPI):
                 )
                 await asyncio.sleep(2)
 
-    if settings.whatsapp_provider == "openwa" and settings.openwa_api_key:
-        from src.services.whatsapp_openwa import detectar_conexao_anterior
         ja_conectado = await detectar_conexao_anterior()
         if ja_conectado:
             logger.info("Sessão OpenWA já estava conectada — há clientes com histórico no WhatsApp")
         else:
             logger.info("Sessão OpenWA é nova — ainda não há contatos sincronizados")
 
-    heartbeat_task = None
-    if settings.whatsapp_provider == "openwa" and settings.openwa_api_key:
-        from src.services.whatsapp import tarefa_heartbeat
         heartbeat_task = asyncio.create_task(tarefa_heartbeat())
         logger.info("Heartbeat OpenWA iniciado")
+    else:
+        heartbeat_task = None
 
     task = asyncio.create_task(tarefa_arquivamento())
 
@@ -156,4 +153,12 @@ app.include_router(chat_router)
 # Checagem da saúde do app por meio de um protocolo healthcehck comum
 @app.get("/health")
 async def health_check():
-    return {"status": "ok", "app": settings.app_name}
+    result = {"status": "ok", "app": settings.app_name}
+    if settings.whatsapp_provider == "openwa" and settings.openwa_api_key:
+        try:
+            from src.services.whatsapp_openwa import obter_status_sessao
+            status_data = await obter_status_sessao()
+            result["openwa"] = status_data.get("status", "unknown")
+        except Exception as e:
+            result["openwa"] = f"error: {e}"
+    return result

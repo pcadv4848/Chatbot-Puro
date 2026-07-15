@@ -214,8 +214,7 @@ async def webhook_whatsapp(request: Request):
     elif "entry" in payload:
         from src.services.signing import verificar_webhook_meta
         sig = request.headers.get("x-hub-signature-256")
-        body_bytes = await request.body()
-        if not verificar_webhook_meta(body_bytes, sig):
+        if not verificar_webhook_meta(body, sig):
             logger.warning("Webhook Meta rejeitado: assinatura inválida")
             return {"status": "ok"}
         mensagens = _parse_meta_payload(payload)
