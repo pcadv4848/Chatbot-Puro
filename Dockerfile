@@ -28,7 +28,7 @@ COPY --chown=appuser:appuser src/ ./src/
 
 USER appuser
 
-EXPOSE 8080
+EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
     CMD python -c "import os, http.client; p=os.environ.get('PORT','8000'); c=http.client.HTTPConnection(f'localhost:{p}'); c.request('GET','/health'); r=c.getresponse(); exit(0) if r.status==200 else exit(1)"

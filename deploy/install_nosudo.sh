@@ -4,11 +4,15 @@ set -euo pipefail
 # ═══════════════════════════════════════════════════════════
 #  ChatBot Puro — Instalação SEM sudo (usuário comum)
 #  Uso: bash install_nosudo.sh
+#  Variáveis de ambiente:
+#    SERVER_IP=187.77.235.249  (para links de retorno no final)
 # ═══════════════════════════════════════════════════════════
 
-REPO_URL="https://github.com/pcadv4848/Chatbot-Puro.git"
-INSTALL_DIR="$HOME/chatbot-puro"
-OPENWA_DIR="$HOME/openwa"
+REPO_URL="${REPO_URL:-https://github.com/pcadv4848/Chatbot-Puro.git}"
+BRANCH="${BRANCH:-master}"
+INSTALL_DIR="${INSTALL_DIR:-$HOME/chatbot-puro}"
+SERVER_IP="${SERVER_IP:-}"
+PORT_CHATBOT="${PORT:-8000}"
 
 echo "=== 1. Verificando ferramentas disponíveis ==="
 for cmd in python3 git node npm; do
@@ -38,9 +42,9 @@ fi
 echo "=== 2. Clonando repositório ==="
 if [ -d "$INSTALL_DIR" ]; then
     cd "$INSTALL_DIR"
-    git pull origin master
+    git pull origin "$BRANCH"
 else
-    git clone --branch master "$REPO_URL" "$INSTALL_DIR"
+    git clone --branch "$BRANCH" "$REPO_URL" "$INSTALL_DIR"
 fi
 cd "$INSTALL_DIR"
 
@@ -54,6 +58,7 @@ echo "=== 4. .env ==="
 if [ ! -f .env ]; then
     cp deploy/.env.production .env
     echo ">>> EDITE .env com: nano $INSTALL_DIR/.env"
+    echo "    Preencha DEEPSEEK_API_KEY, ENCRYPT_KEY e ajuste APP_URL"
 fi
 
 echo "=== 5. Diretórios de dados ==="
@@ -65,14 +70,21 @@ cat > start.sh << 'SCRIPT'
 #!/usr/bin/env bash
 cd "$(dirname "$0")"
 source .venv/bin/activate
-exec uvicorn src.main:app --host 0.0.0.0 --port "${PORT:-8000}" --workers "${UVICORN_WORKERS:-1}"
+nohup uvicorn src.main:app --host 0.0.0.0 --port "${PORT:-8000}" --workers 1 > chatbot.log 2>&1 &
+echo $! > chatbot.pid
+echo "Bot iniciado (PID: $(cat chatbot.pid))"
 SCRIPT
 chmod +x start.sh
 
 echo "=== 7. Script de parada (stop.sh) ==="
 cat > stop.sh << 'SCRIPT'
 #!/usr/bin/env bash
-pkill -f "uvicorn src.main:app" 2>/dev/null && echo "Parou" || echo "Nao estava rodando"
+if [ -f chatbot.pid ]; then
+    kill $(cat chatbot.pid) 2>/dev/null || true
+    rm -f chatbot.pid
+fi
+pkill -f "uvicorn src.main:app" 2>/dev/null || true
+echo "Bot parado"
 SCRIPT
 chmod +x stop.sh
 
@@ -80,37 +92,26 @@ echo "=== 8. Script de inicialização do OpenWA (start_openwa.sh) ==="
 cat > start_openwa.sh << 'SCRIPT'
 #!/usr/bin/env bash
 cd "$HOME/openwa"
-
-# Se o banco ainda não existe (primeira execução), API_MASTER_KEY define a chave
-if [ ! -f "$HOME/openwa/data/openwa-main.sqlite" ]; then
-  export API_MASTER_KEY=PCADV48484848
-fi
-
-exec npm start
+export API_MASTER_KEY=PCADV48484848
+nohup npm start > openwa.log 2>&1 &
+echo $! > openwa.pid
+echo "OpenWA iniciado (PID: $(cat openwa.pid))"
 SCRIPT
 chmod +x start_openwa.sh
 
 echo ""
+QR_URL="http://${SERVER_IP}:${PORT_CHATBOT}/webhook/qr"
 echo "╔══════════════════════════════════════════════════════════╗"
 echo "║  Instalação concluída!                                   ║"
 echo "║                                                          ║"
-echo "║  INICIAR O BOT:                                          ║"
-echo "║    screen -S chatbot                                     ║"
-echo "║    cd ~/chatbot-puro                                     ║"
-echo "║    ./start.sh                                            ║"
-echo "║    (Ctrl+A, D para desanexar)                            ║"
+echo "║  INICIAR:  cd ~/chatbot-puro && ./start.sh               ║"
+echo "║  PARAR:    cd ~/chatbot-puro && ./stop.sh                ║"
+echo "║  LOGS:     tail -f ~/chatbot-puro/chatbot.log            ║"
 echo "║                                                          ║"
-echo "║  VER LOGS:                                               ║"
-echo "║    screen -r chatbot                                     ║"
+echo "║  INICIAR OPENWA:                                         ║"
+echo "║    cd ~/openwa && ./start_openwa.sh                      ║"
 echo "║                                                          ║"
-echo "║  INICIAR OPENWA (fork):                                  ║"
-echo "║    screen -S openwa                                      ║"
-echo "║    cd ~/openwa                                           ║"
-echo "║    npm start                                             ║"
-echo "║                                                          ║"
-echo "║  PARAR O BOT:                                            ║"
-echo "║    cd ~/chatbot-puro && ./stop.sh                        ║"
-echo "║                                                          ║"
-echo "║  QR CODE:                                                ║"
-echo "║    http://187.77.235.249:8000/webhook/qr                 ║"
+if [ -n "$SERVER_IP" ]; then
+echo "║  QR CODE:  $QR_URL                                       ║"
+fi
 echo "╚══════════════════════════════════════════════════════════╝"

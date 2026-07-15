@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 _ultimo_envio_global: float = 0.0
 _envio_lock: asyncio.Lock = asyncio.Lock()
-INTERVALO_ENVIO_SEGUNDOS = 5
+INTERVALO_ENVIO_SEGUNDOS = 1
 
 
 def _deve_retentar(e: Exception) -> bool:
@@ -148,7 +148,7 @@ async def _enviar_mensagem_uma_vez(whatsapp_id: str, texto: str) -> dict:
         headers=_get_headers(),
     )
     if resp.status_code >= 400:
-        body_text = resp.text[:1000]
+        body_text = resp.text[:2000]
         _ultimo_erro_envio = {
             "status_code": resp.status_code,
             "body": body_text,
@@ -168,18 +168,27 @@ _enviar_mensagem_raw = async_retry(should_retry=_deve_retentar)(_enviar_mensagem
 
 
 async def _enviar_mensagem_com_recovery(whatsapp_id: str, texto: str) -> dict:
-    """Envia mensagem com recovery automático: se falhar 5xx, tenta restartar sessão e re-tenta.
+    """Envia mensagem com recovery automático: se falhar 5xx, tenta re-resolver UUID e re-tenta.
 
     1. Tenta enviar com retry (até 3x)
-    2. Se todas falharem com 5xx, tenta restartar a sessão OpenWA
-    3. Faz mais 3 tentativas
+    2. Se todas falharem com 5xx: re-resolve UUID e tenta +1x
+    3. Se ainda falhar: recovery completo (restart sessão) + +1x
     """
-    for tentativa in range(2):
+    for tentativa in range(3):
         try:
             return await _enviar_mensagem_raw(whatsapp_id, texto)
         except httpx.HTTPStatusError as e:
-            if tentativa == 0 and e.response.status_code >= 500:
-                logger.warning("send-text 5xx — recovery da sessão...")
+            if e.response.status_code < 500:
+                raise
+            if tentativa == 0:
+                logger.warning("send-text 5xx (tentativa 1/3) — re-resolvendo UUID...")
+                global _session_id_override
+                _session_id_override = None
+                await resolver_uuid_sessao()
+                await asyncio.sleep(1)
+                continue
+            if tentativa == 1:
+                logger.warning("send-text 5xx (tentativa 2/3) — recovery da sessão...")
                 try:
                     from src.services.whatsapp import verificar_e_reconectar
                     await verificar_e_reconectar()
@@ -460,7 +469,7 @@ async def configurar_webhook(webhook_url: str) -> dict:
         f"{_get_base_url()}/sessions/{session_id}/webhooks",
         json={
             "url": webhook_url,
-                    "events": ["message.received", "message.sent", "session.status"],
+                    "events": ["message.received", "session.status"],
             "secret": settings.openwa_api_key,
         },
         headers=_get_headers(),

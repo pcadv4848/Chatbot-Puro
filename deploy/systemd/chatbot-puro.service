@@ -1,7 +1,7 @@
 [Unit]
 Description=ChatBot Puro — Atendimento WhatsApp
 After=network.target
-Wants=openwa.service
+# Wants=openwa.service (opcional — comentado se OpenWA não for systemd)
 
 [Service]
 Type=simple
@@ -13,7 +13,8 @@ EnvironmentFile=/home/penido-castro-bot/chatbot-puro/.env
 Environment=PYTHONUNBUFFERED=1
 Environment=PYTHONDONTWRITEBYTECODE=1
 
-ExecStart=/home/penido-castro-bot/chatbot-puro/.venv/bin/uvicorn src.main:app --host 0.0.0.0 --port ${PORT:-8000} --workers ${UVICORN_WORKERS:-2}
+# workers=1 OBRIGATÓRIO com SQLite (multi-process corrompe o banco)
+ExecStart=/home/penido-castro-bot/chatbot-puro/.venv/bin/uvicorn src.main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1
 
 Restart=always
 RestartSec=10

@@ -3,15 +3,15 @@ set -euo pipefail
 
 # ═══════════════════════════════════════════════════════════
 #  deploy.sh — ChatBot Puro
-#  Uso: ssh penido-castro-bot@187.77.235.249 'bash -s' < deploy.sh
-#  Ou:  cat deploy.sh | ssh penido-castro-bot@187.77.235.249 bash
+#  Uso: ssh user@server 'bash -s' < deploy.sh
+#  Variáveis de ambiente:
+#    SERVER_IP=187.77.235.249  (para links de retorno)
 # ═══════════════════════════════════════════════════════════
 
-BRANCH="master"
-INSTALL_DIR="$HOME/chatbot-puro"
-OPENWA_DIR="$HOME/openwa"
+SERVER_IP="${SERVER_IP:-}"
+BRANCH="${BRANCH:-master}"
+INSTALL_DIR="${INSTALL_DIR:-$HOME/chatbot-puro}"
 PORT_CHATBOT="${PORT:-8000}"
-PORT_OPENWA="${OPENWA_PORT:-2785}"
 
 echo "=== 1. Atualizando código ==="
 cd "$INSTALL_DIR"
@@ -35,25 +35,29 @@ asyncio.run(main())
 
 echo "=== 4. Parando bot antigo ==="
 pkill -f "uvicorn src.main:app" 2>/dev/null || true
-screen -S chatbot -X quit 2>/dev/null || true
-sleep 1
+sleep 2
 
 echo "=== 5. Iniciando bot ==="
-screen -dmS chatbot bash -c "cd '$INSTALL_DIR' && source .venv/bin/activate && uvicorn src.main:app --host 0.0.0.0 --port $PORT_CHATBOT --workers 1"
+cd "$INSTALL_DIR"
+source .venv/bin/activate
+nohup uvicorn src.main:app --host 0.0.0.0 --port "$PORT_CHATBOT" --workers 1 > chatbot.log 2>&1 &
+echo $! > chatbot.pid
 
 echo "=== 6. Verificando ==="
-sleep 2
+sleep 3
 if pgrep -f "uvicorn src.main:app" > /dev/null; then
-    echo "  ✓ Bot rodando na porta $PORT_CHATBOT"
+    echo "  ✓ Bot rodando na porta $PORT_CHATBOT (PID: $(cat chatbot.pid 2>/dev/null || echo '?'))"
+    echo "  ✓ Logs: tail -f $INSTALL_DIR/chatbot.log"
 else
     echo "  ✗ Bot NAO iniciou — veja os logs:"
-    echo "    screen -r chatbot"
+    echo "    cat $INSTALL_DIR/chatbot.log"
 fi
 
 echo ""
 echo "╔══════════════════════════════════════════════════════════╗"
 echo "║  Deploy concluído!                                       ║"
 echo "║                                                          ║"
-echo "║  Logs:  screen -r chatbot                                ║"
-echo "║  QR:    http://187.77.235.249:$PORT_CHATBOT/webhook/qr      ║"
+if [ -n "$SERVER_IP" ]; then
+echo "║  QR:  http://${SERVER_IP}:${PORT_CHATBOT}/webhook/qr     ║"
+fi
 echo "╚══════════════════════════════════════════════════════════╝"

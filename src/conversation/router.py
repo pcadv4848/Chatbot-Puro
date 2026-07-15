@@ -33,6 +33,7 @@ router = APIRouter(prefix="/webhook", tags=["webhooks"])
 
 # Cache em memória do estado das sessões ativas.
 sessoes_ativas: dict[str, SessionState] = {}
+_sessoes_lock: asyncio.Lock = asyncio.Lock()
 
 # Número do próprio bot (descoberto da sessão OpenWA)
 _bot_phone_number: str | None = None
@@ -107,22 +108,23 @@ async def verificar_webhook_get(
 def _parse_openwa_payload(payload: dict) -> list[dict]:
     event = payload.get("event", "")
     data = payload.get("data") or payload.get("payload") or {}
-    if event not in ("message.received", "messages.upsert"):
-        if event == "message.sent":
-            body = (data.get("body", "") or "").strip()
-            from_jid = data.get("from", "")
-            to_jid = data.get("to", "")
-            if from_jid and to_jid:
-                sender = _extrair_whatsapp_id(from_jid)
-                target = _extrair_whatsapp_id(to_jid)
-                admin_id = settings.admin_whatsapp or _bot_phone_number or ""
-                if admin_id and mesmo_telefone(sender, admin_id):
-                    if any(body.startswith(cmd) for cmd in _ADMIN_INPUTS):
-                        return [{"id": data.get("id", ""), "from": target,
-                                 "type": "text", "body": body, "admin_cmd": True}]
+    if event == "message.sent":
+        body = (data.get("body", "") or "").strip()
+        from_jid = data.get("from", "")
+        to_jid = data.get("to", "")
+        if from_jid and to_jid:
+            sender = _extrair_whatsapp_id(from_jid)
+            target = _extrair_whatsapp_id(to_jid)
+            admin_id = settings.admin_whatsapp or _bot_phone_number or ""
+            if admin_id and mesmo_telefone(sender, admin_id):
+                if any(body.startswith(cmd) for cmd in _ADMIN_INPUTS):
                     return [{"id": data.get("id", ""), "from": target,
-                             "type": "text", "body": body, "admin_cmd": True,
-                             "_ativar_silencioso": True}]
+                             "type": "text", "body": body, "admin_cmd": True}]
+                return [{"id": data.get("id", ""), "from": target,
+                         "type": "text", "body": body, "admin_cmd": True,
+                         "_ativar_silencioso": True}]
+        return []
+    if event not in ("message.received", "messages.upsert"):
         return []
 
     from_jid = data.get("from", "")
@@ -354,12 +356,13 @@ def _detectar_abandono(texto: str) -> bool:
 async def _obter_ou_criar_sessao(whatsapp_id: str) -> SessionState:
     key = _session_key(whatsapp_id)
     logger.debug("_obter_ou_criar_sessao(%s): key=%s", whatsapp_id, key)
-    if key in sessoes_ativas:
-        old = sessoes_ativas[key]
-        if old.whatsapp_id != whatsapp_id:
-            old.whatsapp_id = whatsapp_id
-        logger.debug("_obter_ou_criar_sessao(%s): CACHE HIT, existing_client=%s", whatsapp_id, old.existing_client)
-        return old
+    async with _sessoes_lock:
+        if key in sessoes_ativas:
+            old = sessoes_ativas[key]
+            if old.whatsapp_id != whatsapp_id:
+                old.whatsapp_id = whatsapp_id
+            logger.debug("_obter_ou_criar_sessao(%s): CACHE HIT, existing_client=%s", whatsapp_id, old.existing_client)
+            return old
 
     sessao = await carregar_sessao(key)
     if sessao is None:
@@ -384,7 +387,8 @@ async def _obter_ou_criar_sessao(whatsapp_id: str) -> SessionState:
             sessao.existing_client = False
             logger.info("Sessão arquivada reativada para %s", whatsapp_id)
 
-    sessoes_ativas[key] = sessao
+    async with _sessoes_lock:
+        sessoes_ativas[key] = sessao
     logger.debug("_obter_ou_criar_sessao(%s): final existing_client=%s", whatsapp_id, sessao.existing_client)
     return sessao
 
