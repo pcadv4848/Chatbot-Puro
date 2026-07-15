@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     meta_webhook_secret: str = ""
 
     # ── WhatsApp via OpenWA ──
-    openwa_api_url: str = "http://openwa:2785/api"
+    openwa_api_url: str = "http://127.0.0.1:2785/api"
     openwa_api_key: str = ""
     openwa_session_id: str = "chatbot-puro"
     webhook_verify_token: str = "PCADV"
@@ -61,7 +61,7 @@ class Settings(BaseSettings):
     retry_max_delay: float = 30.0
 
     # ── App / Domínio público ──
-    app_url: str = "https://chatbot-puro.up.railway.app"
+    app_url: str = "http://localhost:8000"
 
     # ── CORS ──
     cors_origins: str = "*"

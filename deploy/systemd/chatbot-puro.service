@@ -1,0 +1,25 @@
+[Unit]
+Description=ChatBot Puro — Atendimento WhatsApp
+After=network.target
+Wants=openwa.service
+
+[Service]
+Type=simple
+User=penido-castro-bot
+Group=penido-castro-bot
+WorkingDirectory=/home/penido-castro-bot/chatbot-puro
+
+EnvironmentFile=/home/penido-castro-bot/chatbot-puro/.env
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+
+ExecStart=/home/penido-castro-bot/chatbot-puro/.venv/bin/uvicorn src.main:app --host 0.0.0.0 --port ${PORT:-8000} --workers ${UVICORN_WORKERS:-2}
+
+Restart=always
+RestartSec=10
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
