@@ -80,7 +80,13 @@ echo "=== 8. Script de inicialização do OpenWA (start_openwa.sh) ==="
 cat > start_openwa.sh << 'SCRIPT'
 #!/usr/bin/env bash
 cd "$HOME/openwa"
-exec node index.js --port 2785
+
+# Se o banco ainda não existe (primeira execução), API_MASTER_KEY define a chave
+if [ ! -f "$HOME/openwa/data/openwa-main.sqlite" ]; then
+  export API_MASTER_KEY=PCADV48484848
+fi
+
+exec npm start
 SCRIPT
 chmod +x start_openwa.sh
 
