@@ -167,28 +167,52 @@ async def _enviar_mensagem_uma_vez(whatsapp_id: str, texto: str) -> dict:
 _enviar_mensagem_raw = async_retry(should_retry=_deve_retentar)(_enviar_mensagem_uma_vez)
 
 
+async def _reiniciar_openwa() -> bool:
+    """Tenta reiniciar o servico OpenWA via API de infra."""
+    try:
+        async with httpx.AsyncClient(timeout=15) as c:
+            resp = await c.post(
+                f"{_get_base_url()}/infra/restart",
+                headers=_get_headers(),
+            )
+            if resp.status_code < 400:
+                logger.info("OpenWA reiniciado via API /infra/restart")
+                return True
+            logger.warning("Falha ao reiniciar OpenWA: %s", resp.status_code)
+    except Exception as e:
+        logger.warning("Erro ao reiniciar OpenWA: %s", e)
+    return False
+
+
 async def _enviar_mensagem_com_recovery(whatsapp_id: str, texto: str) -> dict:
     """Envia mensagem com recovery automático: se falhar 5xx, tenta re-resolver UUID e re-tenta.
 
     1. Tenta enviar com retry (até 3x)
     2. Se todas falharem com 5xx: re-resolve UUID e tenta +1x
-    3. Se ainda falhar: recovery completo (restart sessão) + +1x
+    3. Se ainda falhar: tenta restart do OpenWA via API de infra
+    4. Por último: recovery completo (restart sessão) + +1x
     """
-    for tentativa in range(3):
+    for tentativa in range(4):
         try:
             return await _enviar_mensagem_raw(whatsapp_id, texto)
         except httpx.HTTPStatusError as e:
             if e.response.status_code < 500:
                 raise
             if tentativa == 0:
-                logger.warning("send-text 5xx (tentativa 1/3) — re-resolvendo UUID...")
+                logger.warning("send-text 5xx (tentativa 1/4) — re-resolvendo UUID...")
                 global _session_id_override
                 _session_id_override = None
                 await resolver_uuid_sessao()
                 await asyncio.sleep(1)
                 continue
             if tentativa == 1:
-                logger.warning("send-text 5xx (tentativa 2/3) — recovery da sessão...")
+                logger.warning("send-text 5xx (tentativa 2/4) — restart OpenWA via API...")
+                reiniciado = await _reiniciar_openwa()
+                if reiniciado:
+                    await asyncio.sleep(10)
+                continue
+            if tentativa == 2:
+                logger.warning("send-text 5xx (tentativa 3/4) — recovery da sessão...")
                 try:
                     from src.services.whatsapp import verificar_e_reconectar
                     await verificar_e_reconectar()
