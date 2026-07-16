@@ -51,6 +51,7 @@ def _serializar_json(sessao: SessionState) -> dict:
         "human_attending": sessao.human_attending,
         "existing_client": sessao.existing_client,
         "reminder_count": sessao.reminder_count,
+        "midia_inicial_enviada": sessao.midia_inicial_enviada,
     }
     if dados["dados_cliente"]:
         dados["dados_cliente"] = encrypt_dict(dados["dados_cliente"])
@@ -98,6 +99,7 @@ def _desserializar_json(dados: dict) -> SessionState:
         human_attending=dados.get("human_attending", False),
         existing_client=dados.get("existing_client", False),
         reminder_count=dados.get("reminder_count", 0),
+        midia_inicial_enviada=dados.get("midia_inicial_enviada", False),
     )
 
 

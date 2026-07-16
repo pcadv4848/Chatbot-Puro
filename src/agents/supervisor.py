@@ -402,6 +402,9 @@ async def _processar_classificando(texto: str, sessao: SessionState) -> str:
     else:
         sessao.resumo_caso += f"Cliente: {texto}\n"
 
+    if sessao.step == 1 and not sessao.midia_inicial_enviada:
+        await _enviar_audio_inicial(sessao)
+
     sessao.step += 1
     resultado = classificar(sessao.resumo_caso)
     confianca = resultado["confianca"]
@@ -444,6 +447,20 @@ async def _processar_classificando(texto: str, sessao: SessionState) -> str:
     if sessao.step == 1:
         return f"Ola! Advocacia Penido Castro. Para iniciar, {pergunta}"
     return pergunta
+
+
+async def _enviar_audio_inicial(sessao: SessionState) -> None:
+    from src.services.whatsapp import enviar_midia
+    from src.conversation.storage import salvar_sessao
+    audio_url = f"{settings.app_url}/data/AudioInicial.ogg"
+    try:
+        await enviar_midia(sessao.whatsapp_id, audio_url, "audio")
+        sessao.midia_inicial_enviada = True
+        sessao.conversa.append({"role": "assistant", "content": "[AudioInicial.ogg enviado]"})
+        await salvar_sessao(sessao)
+        logger.info("AudioInicial.ogg enviado para %s", sessao.whatsapp_id)
+    except Exception as e:
+        logger.error("Falha ao enviar AudioInicial.ogg para %s: %s", sessao.whatsapp_id, e)
 
 
 def _msg_variada(lista: list[str], sessao: SessionState, **kwargs) -> str:

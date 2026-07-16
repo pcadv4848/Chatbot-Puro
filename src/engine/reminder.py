@@ -18,7 +18,9 @@ Configuração via .env:
 """
 import asyncio
 import logging
+import os
 from datetime import datetime, timezone
+from pathlib import Path
 
 from src.config import settings
 from src.conversation.state import SessionState, SessionStatus
@@ -26,12 +28,24 @@ from src.conversation.storage import salvar_sessao, carregar_sessao
 
 logger = logging.getLogger(__name__)
 
-_REMINDER_MESSAGE = (
-    "Ola! Notei que sua conversa conosco ficou pendente. \n\n"
-    "Ainda precisa de ajuda com seu caso? "
-    "Estou aqui para entender sua situacao e te ajudar. "
-    "E so me enviar uma mensagem!"
-)
+_FOLLOWUP_DIR = Path(__file__).parent.parent.parent / "data"
+
+
+def _ler_followup_texto() -> str:
+    caminho = _FOLLOWUP_DIR / "FollowUp.txt"
+    try:
+        if caminho.exists():
+            texto = caminho.read_text(encoding="utf-8").strip()
+            if texto:
+                return texto
+    except Exception as e:
+        logger.warning("Erro ao ler FollowUp.txt: %s", e)
+    return (
+        "Ola! Notei que sua conversa conosco ficou pendente. \n\n"
+        "Ainda precisa de ajuda com seu caso? "
+        "Estou aqui para entender sua situacao e te ajudar. "
+        "E so me enviar uma mensagem!"
+    )
 
 
 async def _verificar_lembrete(sessao: SessionState) -> bool:
@@ -63,14 +77,25 @@ async def _verificar_lembrete(sessao: SessionState) -> bool:
     if hora_local < 7:
         return False
 
-    from src.services.whatsapp import enviar_mensagem
+    from src.services.whatsapp import enviar_mensagem, enviar_midia
+
+    followup_texto = _ler_followup_texto()
 
     try:
-        await enviar_mensagem(sessao.whatsapp_id, _REMINDER_MESSAGE)
+        audio_path = _FOLLOWUP_DIR / "FollowUp.ogg"
+        if audio_path.exists():
+            audio_url = f"{settings.app_url}/data/FollowUp.ogg"
+            try:
+                await enviar_midia(sessao.whatsapp_id, audio_url, "audio")
+                logger.info("FollowUp.ogg enviado para %s", sessao.whatsapp_id)
+            except Exception as e:
+                logger.error("Falha ao enviar FollowUp.ogg para %s: %s", sessao.whatsapp_id, e)
+
+        await enviar_mensagem(sessao.whatsapp_id, followup_texto)
         sessao.reminder_count += 1
         sessao.conversa.append({
             "role": "assistant",
-            "content": f"[LEMBRETE #{sessao.reminder_count}] {_REMINDER_MESSAGE}",
+            "content": f"[LEMBRETE #{sessao.reminder_count}] {followup_texto}",
         })
         await salvar_sessao(sessao)
         logger.info(

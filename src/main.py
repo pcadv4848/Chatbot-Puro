@@ -34,6 +34,7 @@ logging.getLogger().addFilter(DadosSensiveisFilter())
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from slowapi import _rate_limit_exceeded_handler
 from src.config import settings
 from src.conversation.router import router as webhook_router, iniciar_carregamento_sessoes, tarefa_arquivamento, sessoes_ativas
@@ -145,6 +146,12 @@ elif settings.cors_origins:
         allow_headers=["Content-Type", "Authorization"],
     )
 
+
+# Servir arquivos estáticos (áudios, mídia) do diretório data/
+import os
+data_dir = os.path.join(os.path.dirname(__file__), "..", "data")
+os.makedirs(data_dir, exist_ok=True)
+app.mount("/data", StaticFiles(directory=data_dir), name="data")
 
 # Inclusão do webhook e chat router
 app.include_router(webhook_router)

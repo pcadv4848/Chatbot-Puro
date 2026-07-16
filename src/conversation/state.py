@@ -44,3 +44,4 @@ class SessionState:
     human_attending: bool = False
     existing_client: bool = False
     reminder_count: int = 0
+    midia_inicial_enviada: bool = False

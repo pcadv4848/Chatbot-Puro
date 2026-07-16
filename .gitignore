@@ -6,7 +6,10 @@
 credentials.json
 
 # ── Dados gerados em tempo de execução ──
-data/
+data/*
+!data/AudioInicial.ogg
+!data/FollowUp.ogg
+!data/FollowUp.txt
 output/
 
 # ── Cache do Python ──
