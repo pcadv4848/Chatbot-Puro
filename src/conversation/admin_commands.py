@@ -92,12 +92,28 @@ async def processar_admin_commands(texto: str, sessao: SessionState, admin_cmd: 
         return f"Cliente marcado como antigo. Total de clientes antigos: {total}"
 
     if texto == "FOLLOWUP.":
-        caminho = Path(__file__).parent.parent.parent / "data" / "FollowUp.txt"
+        caminho_txt = Path(__file__).parent.parent.parent / "data" / "FollowUp.txt"
+        caminho_ogg = Path(__file__).parent.parent.parent / "data" / "FollowUp.ogg"
         try:
-            conteudo = caminho.read_text(encoding="utf-8")
-            if not conteudo.strip():
+            from src.services.whatsapp import enviar_mensagem, enviar_midia
+            from src.conversation.storage import salvar_sessao
+            conteudo = caminho_txt.read_text(encoding="utf-8").strip()
+            if not conteudo:
                 return "FollowUp.txt está vazio. Envie 'FOLLOWUP: texto' para definir."
-            return f"FollowUp.txt:\n{conteudo}"
+            if caminho_ogg.exists():
+                audio_url = f"{settings.app_url}/data/FollowUp.ogg"
+                try:
+                    await enviar_midia(sessao.whatsapp_id, audio_url, "audio")
+                except Exception as e:
+                    logger.error("Falha ao enviar FollowUp.ogg: %s", e)
+            await enviar_mensagem(sessao.whatsapp_id, conteudo)
+            sessao.reminder_count += 1
+            sessao.conversa.append({
+                "role": "assistant",
+                "content": f"[LEMBRETE #{sessao.reminder_count}] {conteudo}",
+            })
+            await salvar_sessao(sessao)
+            return f"Followup enviado para {sessao.whatsapp_id}:\n{conteudo}"
         except FileNotFoundError:
             return "Arquivo FollowUp.txt não encontrado."
 
