@@ -459,7 +459,7 @@ async def _processar_classificando(texto: str, sessao: SessionState) -> str:
     idx_pergunta = min(sessao.step - 1, len(_PERGUNTAS_CLASSIFICACAO) - 1)
     pergunta = _PERGUNTAS_CLASSIFICACAO[idx_pergunta]
     if sessao.step == 1:
-        return f"Ola! Advocacia Penido Castro. Para iniciar, {pergunta}"
+        return f"Advocacia Penido Castro. Para iniciar, {pergunta}"
     return pergunta
 
 

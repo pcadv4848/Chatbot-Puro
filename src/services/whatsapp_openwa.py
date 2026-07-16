@@ -246,6 +246,8 @@ async def _enviar_midia_uma_vez(whatsapp_id: str, url_midia: str, tipo: str = "i
         "chatId": _normalizar_id(whatsapp_id),
         "url": url_midia,
     }
+    if tipo == "audio":
+        payload["ptt"] = True
     client = await get_client()
     resp = await client.post(
         f"{_get_base_url()}/sessions/{await _get_session_id_garantido()}/messages/{endpoint}",

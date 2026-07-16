@@ -137,13 +137,13 @@ MAX_OCR_RETRY = settings.max_ocr_retries
 
 # ── Mensagens do fluxo de tráfego pago ──
 TRAFEGO_SAUDACAO = [
-    "Ola! Aqui e da Advocacia Penido Castro. Como voce se chama?",
-    "Ola! Advocacia Penido Castro. Qual o seu nome?",
+    "Aqui e da Advocacia Penido Castro. Como voce se chama?",
+    "Advocacia Penido Castro. Qual o seu nome?",
 ]
 
 TRAFEGO_HISTORIA = [
-    "Prazer, {nome}! Me conta rapidinho: o que esta acontecendo com voce?",
-    "{nome}, que bom falar com voce. Pode resumir qual seu caso?",
+    "Prazer, {nome}. Pode me explicar qual e o seu caso?",
+    "{nome}, conte resumidamente o que esta acontecendo com voce.",
 ]
 
 TRAFEGO_FINALIZAR = [
@@ -206,13 +206,13 @@ SILENT = "__SILENT__"
 
 # ── Perguntas progressivas para classificação ──
 PERGUNTAS_CLASSIFICACAO = [
-    "conte um pouco sobre o que voce precisa. Por exemplo: auxilio-doenca, "
+    "explique o que voce precisa. Por exemplo: auxilio-doenca, "
     "aposentadoria, pensao, ou revisao de beneficio.",
     "voce esta trabalhando atualmente ou esta afastado?",
     "ha quanto tempo voce esta nessa situacao?",
     "voce ja contribuiu para o INSS? Por quanto tempo?",
     "qual a sua idade?",
-    "voce ja passou por alguma cirurgia ou tem algum problema de saude "
+    "voce passou por cirurgia ou tem algum problema de saude "
     "que esteja atrapalhando o trabalho?",
 ]
 
