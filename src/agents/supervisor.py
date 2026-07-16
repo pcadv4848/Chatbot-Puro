@@ -147,11 +147,23 @@ async def _processar_humano(texto: str, sessao: SessionState) -> str:
 
 async def processar(texto: str, sessao: SessionState) -> str:
     """Processa a mensagem do cliente e retorna a resposta."""
+    logger.info("DEBUG processar: step=%s, midia=%s, human=%s, existing=%s, status=%s, texto='%s'",
+                 sessao.step, sessao.midia_inicial_enviada, sessao.human_attending,
+                 sessao.existing_client, sessao.status.value if sessao.status else None, texto[:50])
+
     if sessao.human_attending:
+        logger.info("DEBUG processar: human_attending=True → _processar_humano")
         return await _processar_humano(texto, sessao)
 
     if sessao.existing_client:
+        logger.info("DEBUG processar: existing_client=True → _processar_humano")
         return await _processar_humano(texto, sessao)
+
+    if sessao.step == 0 and not sessao.midia_inicial_enviada:
+        logger.info("DEBUG processar: ENVIANDO AUDIO INICIAL!")
+        await _enviar_audio_inicial(sessao)
+        sessao.step += 1
+        return SILENT
 
     if sessao.status == SessionStatus.CONCLUIDO:
         sessao.status = SessionStatus.CLASSIFICANDO
@@ -402,8 +414,10 @@ async def _processar_classificando(texto: str, sessao: SessionState) -> str:
     else:
         sessao.resumo_caso += f"Cliente: {texto}\n"
 
-    if sessao.step == 1 and not sessao.midia_inicial_enviada:
+    if sessao.step == 0 and not sessao.midia_inicial_enviada:
         await _enviar_audio_inicial(sessao)
+        sessao.step += 1
+        return SILENT
 
     sessao.step += 1
     resultado = classificar(sessao.resumo_caso)

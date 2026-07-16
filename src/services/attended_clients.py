@@ -37,6 +37,14 @@ async def mark_attended(whatsapp_id: str) -> None:
         logger.info("Cliente %s marcado como atendido", whatsapp_id)
 
 
+async def count_attended() -> int:
+    """Retorna o total de clientes marcados como atendidos."""
+    from src.db.models import AttendedClient
+    async with async_session() as session:
+        result = await session.execute(select(AttendedClient))
+        return len(result.scalars().all())
+
+
 async def mark_unattended(whatsapp_id: str) -> None:
     """Remove um cliente da lista de atendidos."""
     from src.db.models import AttendedClient

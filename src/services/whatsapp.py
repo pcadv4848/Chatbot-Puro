@@ -160,8 +160,8 @@ async def deletar_sessao() -> dict:
     return await _get_provider()["deletar_sessao"]()
 
 
-async def configurar_webhook(webhook_url: str) -> dict:
-    return await _get_provider()["configurar_webhook"](webhook_url)
+async def configurar_webhook(webhook_url: str, **kwargs) -> dict:
+    return await _get_provider()["configurar_webhook"](webhook_url, **kwargs)
 
 
 async def obter_status_sessao() -> dict:

@@ -69,7 +69,7 @@ async def lifespan(app: FastAPI):
         webhook_url = f"{settings.app_url}/webhook/whatsapp"
         for tentativa in range(3):
             try:
-                await configurar_webhook(webhook_url)
+                await configurar_webhook(webhook_url, force=True)
                 logger.info("Webhook OpenWA registrado: %s", webhook_url)
                 break
             except Exception as e:

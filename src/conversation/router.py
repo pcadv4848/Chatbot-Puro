@@ -486,8 +486,11 @@ async def processar_mensagem_texto(whatsapp_id: str, texto: str, admin_cmd: bool
 
     sessao.conversa.append({"role": "user", "content": texto})
 
+    logger.info("DEBUG pre-processar: step=%s, midia=%s, human=%s, existing=%s",
+                 sessao.step, sessao.midia_inicial_enviada, sessao.human_attending, sessao.existing_client)
     resposta = await processar(texto, sessao)
     if resposta is SILENT:
+        logger.info("DEBUG processar retornou SILENT")
         await salvar_sessao(sessao)
         return
     sessao.conversa.append({"role": "assistant", "content": resposta})
@@ -723,7 +726,7 @@ async def forcar_registro_webhook():
 
     webhook_url = f"{cfg.app_url}/webhook/whatsapp"
     try:
-        await configurar_webhook(webhook_url)
+        await configurar_webhook(webhook_url, force=True)
         return JSONResponse({"status": "ok", "webhook_url": webhook_url})
     except Exception as e:
         return JSONResponse({"status": "erro", "erro": str(e)}, status_code=500)

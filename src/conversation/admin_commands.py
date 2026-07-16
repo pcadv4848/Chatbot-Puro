@@ -1,4 +1,5 @@
 import logging
+from pathlib import Path
 
 from src.conversation.state import SessionState, SessionStatus
 from src.conversation.jid_utils import mesmo_telefone, session_key
@@ -23,13 +24,14 @@ def _get_bot_phone() -> str:
 
 
 ADMIN_INPUTS = {
-    "RESETAR.", "BOT.", "HUMANO.", "STATUS.",
+    "RESETAR.", "BOT.", "HUMANO.", "STATUS.", "ANTIGO.", "FOLLOWUP.", "FOLLOWUP:",
 }
 
 ADMIN_ALIASES: dict[str, str] = {
     "Consegue entender?": "HUMANO.",
     "Olá!": "BOT.",
     "Vamos retomar.": "RESETAR.",
+    "Um momento....": "ANTIGO.",
 }
 
 
@@ -77,5 +79,33 @@ async def processar_admin_commands(texto: str, sessao: SessionState, admin_cmd: 
             f"Beneficio: {benef}\n"
             f"Dados extraidos: {dados}"
         )
+
+    if texto == "ANTIGO.":
+        from src.services.attended_clients import mark_attended, count_attended
+        await mark_attended(sessao.whatsapp_id)
+        sessao.human_attending = True
+        sessao.existing_client = True
+        sessao.status = SessionStatus.AGUARDANDO_ADVOGADO
+        from src.conversation.storage import salvar_sessao
+        await salvar_sessao(sessao)
+        total = await count_attended()
+        return f"Cliente marcado como antigo. Total de clientes antigos: {total}"
+
+    if texto == "FOLLOWUP.":
+        caminho = Path(__file__).parent.parent.parent / "data" / "FollowUp.txt"
+        try:
+            conteudo = caminho.read_text(encoding="utf-8")
+            if not conteudo.strip():
+                return "FollowUp.txt está vazio. Envie 'FOLLOWUP: texto' para definir."
+            return f"FollowUp.txt:\n{conteudo}"
+        except FileNotFoundError:
+            return "Arquivo FollowUp.txt não encontrado."
+
+    if texto.startswith("FOLLOWUP:"):
+        novo_texto = texto[len("FOLLOWUP:"):].strip()
+        caminho = Path(__file__).parent.parent.parent / "data" / "FollowUp.txt"
+        caminho.write_text(novo_texto, encoding="utf-8")
+        logger.info("FollowUp.txt atualizado via comando admin")
+        return f"FollowUp.txt atualizado:\n{novo_texto}"
 
     return None

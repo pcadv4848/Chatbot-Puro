@@ -244,7 +244,7 @@ async def _enviar_midia_uma_vez(whatsapp_id: str, url_midia: str, tipo: str = "i
 
     payload = {
         "chatId": _normalizar_id(whatsapp_id),
-        "file": url_midia,
+        "url": url_midia,
     }
     client = await get_client()
     resp = await client.post(
@@ -456,20 +456,23 @@ async def resolver_uuid_sessao() -> str | None:
         return None
 
 
-async def configurar_webhook(webhook_url: str) -> dict:
+async def configurar_webhook(webhook_url: str, force: bool = False) -> dict:
     """Configura o webhook no OpenWA para receber mensagens.
 
-    Remove webhooks antigos com a mesma URL antes de registrar um novo,
-    evitando duplicatas a cada restart.
+    Por padrão (force=False), apenas verifica se já existe um webhook ativo
+    com a mesma URL e eventos. Se existir, retorna sem deletar/criar.
+    Use force=True apenas no startup para garantir que o webhook está correto.
+
+    Remove webhooks antigos APENAS se force=True, evitando deletar webhooks
+    a cada acesso à página de QR (que causava perda de mensagens).
     """
     global _session_id_override
     client = await get_client()
 
-    # Garantir que temos o UUID real antes de tentar
     await resolver_uuid_sessao()
     session_id = _get_session_id()
 
-    # Remover webhooks antigos com a mesma URL
+    # Verificar se já existe webhook ativo com a mesma URL
     try:
         list_resp = await client.get(
             f"{_get_base_url()}/sessions/{session_id}/webhooks",
@@ -479,14 +482,23 @@ async def configurar_webhook(webhook_url: str) -> dict:
             webhooks = _safe_json(list_resp)
             if isinstance(webhooks, list):
                 for wh in webhooks:
-                    if wh.get("url") == webhook_url and wh.get("id"):
-                        await client.delete(
-                            f"{_get_base_url()}/sessions/{session_id}/webhooks/{wh['id']}",
-                            headers=_get_headers(),
-                        )
-                        logger.info("Webhook antigo removido: %s", wh["id"])
+                    if (
+                        wh.get("url") == webhook_url
+                        and wh.get("active") is not False
+                        and "message.received" in (wh.get("events") or [])
+                    ):
+                        if not force:
+                            logger.debug("Webhook já existe e está ativo: %s", wh.get("id"))
+                            return wh
+                        # force=True: remover para recriar
+                        if wh.get("id"):
+                            await client.delete(
+                                f"{_get_base_url()}/sessions/{session_id}/webhooks/{wh['id']}",
+                                headers=_get_headers(),
+                            )
+                            logger.info("Webhook antigo removido (force): %s", wh["id"])
     except Exception as e:
-        logger.warning("Falha ao limpar webhooks antigos: %s", e)
+        logger.warning("Falha ao listar webhooks: %s", e)
 
     # Registrar webhook
     resp = await client.post(
@@ -502,7 +514,7 @@ async def configurar_webhook(webhook_url: str) -> dict:
     # Se ainda falhou, tentar forçar resolução de UUID e re-tentar
     if resp.status_code >= 400 and session_id == settings.openwa_session_id:
         logger.info("Webhook falhou (status %s) — forçando resolução de UUID...", resp.status_code)
-        _session_id_override = None  # força re-resolução
+        _session_id_override = None
         await resolver_uuid_sessao()
         nova_id = _get_session_id()
         if nova_id != session_id:
@@ -723,7 +735,7 @@ async def verificar_e_reconectar() -> dict:
     # 4. Registrar webhook
     webhook_url = f"{settings.app_url}/webhook/whatsapp"
     try:
-        await configurar_webhook(webhook_url)
+        await configurar_webhook(webhook_url, force=True)
     except Exception as e:
         logger.warning("Heartbeat: falha webhook: %s", e)
 
