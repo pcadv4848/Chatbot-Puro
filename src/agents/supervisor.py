@@ -48,7 +48,6 @@ from src.agents.extraction import (
 
 # ── Inicializar LLM (DeepSeek > Verboo > Gemini > Claude) ──
 _model = None
-_model_with_tools = None
 MODO_IA = False
 
 if settings.deepseek_api_key:
@@ -202,12 +201,15 @@ async def _processar_ia(texto: str, sessao: SessionState) -> str:
         """Identifica o tipo de beneficio previdenciario com base no relato do cliente."""
         return json.dumps(classificar(texto_cliente), ensure_ascii=False)
 
-    tools = [classificar_beneficio, extrair_ocr_tool]
+    # Só expõe a tool de classificação quando step estiver próximo do mínimo
+    # para evitar que a IA identifique o benefício prematuramente
+    tools = []
+    if sessao.step + 1 >= _MIN_STEPS_PARA_CONCLUIR:
+        tools.append(classificar_beneficio)
+    tools.append(extrair_ocr_tool)
     func_map = {t.name: t for t in tools}
 
-    global _model_with_tools
-    if _model_with_tools is None:
-        _model_with_tools = _model.bind_tools(tools)
+    _local_model = _model.bind_tools(tools)
 
     messages = [SystemMessage(content=SYSTEM_PROMPT)]
     for msg in sessao.conversa[-12:]:
@@ -223,7 +225,7 @@ async def _processar_ia(texto: str, sessao: SessionState) -> str:
 
     try:
         response = await asyncio.wait_for(
-            _model_with_tools.ainvoke(messages),
+            _local_model.ainvoke(messages),
             timeout=30,
         )
     except asyncio.TimeoutError:
@@ -286,7 +288,7 @@ async def _processar_ia(texto: str, sessao: SessionState) -> str:
 
         try:
             response = await asyncio.wait_for(
-                _model_with_tools.ainvoke(messages),
+                _local_model.ainvoke(messages),
                 timeout=30,
             )
         except asyncio.TimeoutError:
@@ -311,10 +313,11 @@ async def _atualizar_sessao_por_tool(nome_tool: str, resultado: str, sessao: Ses
         return
 
     if nome_tool == "classificar_beneficio":
-        sessao.tipo_beneficio = dados.get("tipo", sessao.tipo_beneficio)
-        sessao.esfera = dados.get("esfera", sessao.esfera)
-        if sessao.status == SessionStatus.CLASSIFICANDO:
-            sessao.status = SessionStatus.AGUARDANDO_ADVOGADO
+        if sessao.step >= _MIN_STEPS_PARA_CONCLUIR:
+            sessao.tipo_beneficio = dados.get("tipo", sessao.tipo_beneficio)
+            sessao.esfera = dados.get("esfera", sessao.esfera)
+            if sessao.status == SessionStatus.CLASSIFICANDO:
+                sessao.status = SessionStatus.AGUARDANDO_ADVOGADO
 
     elif nome_tool == "validar_dados_cliente":
         pass
@@ -458,8 +461,11 @@ async def _processar_classificando(texto: str, sessao: SessionState) -> str:
 
     idx_pergunta = min(sessao.step - 1, len(_PERGUNTAS_CLASSIFICACAO) - 1)
     pergunta = _PERGUNTAS_CLASSIFICACAO[idx_pergunta]
+    nome = sessao.dados_cliente.get("nome", "")
+    if nome:
+        pergunta = f"{nome}, {pergunta}"
     if sessao.step == 1:
-        return f"Advocacia Penido Castro. Para iniciar, {pergunta}"
+        return f"Ola! {pergunta}"
     return pergunta
 
 

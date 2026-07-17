@@ -255,13 +255,16 @@ async def webhook_whatsapp(request: Request):
                     if sessao and sessao.existing_client and not is_admin and not admin_cmd:
                         logger.info("BLOQUEADO existing_client: %s (body='%s')", whatsapp_id, body[:80] if body else "")
                         if msg_type == "text" and body:
-                            sessao.conversa.append({"role": "user", "content": body})
-                            if _detectar_abandono(body):
-                                sessao.status = SessionStatus.PAUSADO
-                                sessao.motivo_pausa = "abandono voluntário"
+                            if body.upper().strip(".!?") == "RESETAR":
+                                await processar_mensagem_texto(whatsapp_id, body)
                             else:
-                                from src.agents.supervisor import _processar_humano
-                                await _processar_humano(body, sessao)
+                                sessao.conversa.append({"role": "user", "content": body})
+                                if _detectar_abandono(body):
+                                    sessao.status = SessionStatus.PAUSADO
+                                    sessao.motivo_pausa = "abandono voluntário"
+                                else:
+                                    from src.agents.supervisor import _processar_humano
+                                    await _processar_humano(body, sessao)
                         elif msg_type in ("image", "document") and midia_id:
                             await processar_midia(sessao, midia_id)
                             sessao.conversa.append({"role": "user", "content": f"[midia: {midia_id}]"})
@@ -276,8 +279,9 @@ async def webhook_whatsapp(request: Request):
                     if msg_type == "text" and body:
                         admin_cmd = msg.get("admin_cmd", False)
                         ativar_silencioso = msg.get("_ativar_silencioso", False)
+                        wa_id = whatsapp_id
                         await asyncio.wait_for(
-                            processar_mensagem_texto(whatsapp_id, body, admin_cmd=admin_cmd,
+                            processar_mensagem_texto(wa_id, body, admin_cmd=admin_cmd,
                                                      ativar_silencioso=ativar_silencioso),
                             timeout=120,
                         )
@@ -427,7 +431,7 @@ async def processar_mensagem_texto(whatsapp_id: str, texto: str, admin_cmd: bool
     if not admin_cmd and is_admin:
         admin_cmd = True
 
-    cmd_resposta = await _admin_commands(texto, sessao, admin_cmd=admin_cmd)
+    cmd_resposta = await _admin_commands(texto, sessao, admin_cmd=admin_cmd, cache=sessoes_ativas)
     if cmd_resposta is not None:
         sessao.conversa.append({"role": "user", "content": texto})
         sessao.conversa.append({"role": "assistant", "content": cmd_resposta})

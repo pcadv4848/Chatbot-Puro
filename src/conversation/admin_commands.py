@@ -35,8 +35,21 @@ ADMIN_ALIASES: dict[str, str] = {
 }
 
 
-async def processar_admin_commands(texto: str, sessao: SessionState, admin_cmd: bool = False) -> str | None:
+async def processar_admin_commands(texto: str, sessao: SessionState, admin_cmd: bool = False,
+                                   cache: dict | None = None) -> str | None:
     admin_id = settings.admin_whatsapp or _get_bot_phone() or ""
+
+    # ── RESETAR: disponível para qualquer usuário ──
+    if texto.upper().strip(".!?") == "RESETAR":
+        from src.conversation.storage import deletar_sessao
+        key = session_key(sessao.whatsapp_id)
+        await deletar_sessao(sessao.whatsapp_id)
+        if cache is not None and key in cache:
+            del cache[key]
+        sessao.__init__(whatsapp_id=sessao.whatsapp_id)
+        return "Conversa resetada! Vamos comecar do zero. Como voce se chama?"
+
+    # ── Demais comandos: apenas admin ──
     if not admin_id:
         return None
     if not admin_cmd and not mesmo_telefone(sessao.whatsapp_id, admin_id):
@@ -46,7 +59,10 @@ async def processar_admin_commands(texto: str, sessao: SessionState, admin_cmd: 
 
     if texto == "RESETAR.":
         from src.conversation.storage import deletar_sessao
+        key = session_key(sessao.whatsapp_id)
         await deletar_sessao(sessao.whatsapp_id)
+        if cache is not None and key in cache:
+            del cache[key]
         sessao.__init__(whatsapp_id=sessao.whatsapp_id)
         return "Conversa resetada. Cliente pode recomecar."
 

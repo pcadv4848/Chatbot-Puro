@@ -131,8 +131,8 @@ BENEFICIO_NOME: dict[str, str] = {
 }
 
 # ── Constantes do fluxo de classificação ──
-MAX_TENTATIVAS_CLASSIFICACAO = 15
-MIN_STEPS_PARA_CONCLUIR = 3
+MAX_TENTATIVAS_CLASSIFICACAO = 30
+MIN_STEPS_PARA_CONCLUIR = 14
 MAX_OCR_RETRY = settings.max_ocr_retries
 
 # ── Mensagens do fluxo de tráfego pago ──
@@ -206,14 +206,20 @@ SILENT = "__SILENT__"
 
 # ── Perguntas progressivas para classificação ──
 PERGUNTAS_CLASSIFICACAO = [
-    "explique o que voce precisa. Por exemplo: auxilio-doenca, "
-    "aposentadoria, pensao, ou revisao de beneficio.",
-    "voce esta trabalhando atualmente ou esta afastado?",
-    "ha quanto tempo voce esta nessa situacao?",
-    "voce ja contribuiu para o INSS? Por quanto tempo?",
-    "qual a sua idade?",
-    "voce passou por cirurgia ou tem algum problema de saude "
-    "que esteja atrapalhando o trabalho?",
+    "me conte um pouco da sua situacao e sobre suas duvidas?",
+    "e sobre o trabalho, como esta essa questao?",
+    "ha quanto tempo esta nessa situacao?",
+    "ja contribuiu para o INSS alguma vez?",
+    "posso saber sua idade?",
+    "seu trabalho e mais na cidade ou no campo?",
+    "tem alguma questao de saude envolvida?",
+    "ja recebeu ou recebe algum beneficio do INSS?",
+    "faz algum tratamento ou acompanhamento medico?",
+    "teve algum falecimento na familia recentemente?",
+    "sabe me dizer como eram suas contribuicoes?",
+    "trabalhou em algum ambiente com produtos quimicos ou insalubre?",
+    "sempre trabalhou com carteira assinada ou nao?",
+    "gostaria de acrescentar mais alguma coisa?",
 ]
 
 # ── Palavras de afirmação/negação ──
