@@ -9,6 +9,7 @@ Uso direto (raro — prefira o dispatcher em whatsapp.py):
 import asyncio
 import json
 import logging
+import random
 import time
 import httpx
 from src.config import settings
@@ -749,8 +750,9 @@ async def tarefa_heartbeat():
     """Background task: mantém sessão ativa com verificação periódica.
 
     Executa em loop infinito — deve ser lançada como asyncio.create_task().
+    O intervalo tem jitter aleatório para evitar padrão de bot.
     """
-    logger.info("Heartbeat: iniciando (intervalo=%ds)", HEARTBEAT_INTERVAL)
+    logger.info("Heartbeat: iniciando (intervalo base=%ds)", HEARTBEAT_INTERVAL)
     await asyncio.sleep(15)  # delay inicial p/ startup
     while True:
         try:
@@ -760,4 +762,5 @@ async def tarefa_heartbeat():
             break
         except Exception as e:
             logger.error("Heartbeat: erro: %s", e)
-        await asyncio.sleep(HEARTBEAT_INTERVAL)
+        jitter = HEARTBEAT_INTERVAL * random.uniform(0.7, 1.3)
+        await asyncio.sleep(jitter)

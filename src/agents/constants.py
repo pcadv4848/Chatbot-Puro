@@ -132,7 +132,9 @@ BENEFICIO_NOME: dict[str, str] = {
 
 # ── Constantes do fluxo de classificação ──
 MAX_TENTATIVAS_CLASSIFICACAO = 30
+MIN_STEPS_EARLY_CLASSIFY = 6
 MIN_STEPS_PARA_CONCLUIR = 14
+EARLY_CLASSIFY_CONFIDENCE = 0.7
 MAX_OCR_RETRY = settings.max_ocr_retries
 
 # ── Mensagens do fluxo de tráfego pago ──

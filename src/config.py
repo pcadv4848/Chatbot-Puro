@@ -90,6 +90,11 @@ class Settings(BaseSettings):
     session_timeout_minutes: int = 60
     session_archive_days: int = 30
 
+    # ── Anti-Ban ──
+    max_contatos_por_hora: int = 10
+    antiban_fator_madrugada: float = 2.0
+    antiban_fator_noite: float = 1.4
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
 

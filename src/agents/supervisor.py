@@ -17,7 +17,9 @@ from src.agents.constants import (
     PERGUNTAS_CAMPOS, PERGUNTAS_SIMPLES, VALIDAR_CAMPO,
     MESES_PT, UF_MAP, PADROES_CAMPO, BENEFICIO_NOME,
     MAX_TENTATIVAS_CLASSIFICACAO as _MAX_TENTATIVAS_CLASSIFICACAO,
+    MIN_STEPS_EARLY_CLASSIFY as _MIN_STEPS_EARLY,
     MIN_STEPS_PARA_CONCLUIR as _MIN_STEPS_PARA_CONCLUIR,
+    EARLY_CLASSIFY_CONFIDENCE as _EARLY_CONF,
     MAX_OCR_RETRY as _MAX_OCR_RETRY,
     TRAFEGO_SAUDACAO as _TRAFEGO_SAUDACAO,
     TRAFEGO_HISTORIA as _TRAFEGO_HISTORIA,
@@ -120,6 +122,19 @@ if not MODO_IA:
     logger.warning("IA: NENHUM provedor disponivel — usando fallback classico")
 
 
+def _pode_classificar(confianca: float, step: int) -> bool:
+    """Define se o sistema pode aceitar a classificação do benefício.
+
+    Permite classificação antecipada (step >= 6) apenas com confiança alta (>= 0.7).
+    A partir do step ideal (>= 14), aceita com confiança normal (>= 0.5).
+    """
+    if step >= _MIN_STEPS_PARA_CONCLUIR:
+        return confianca >= 0.5
+    if step >= _MIN_STEPS_EARLY:
+        return confianca >= _EARLY_CONF
+    return False
+
+
 async def _processar_humano(texto: str, sessao: SessionState) -> str:
     """Processa mensagens em modo silencioso enquanto humano atende.
 
@@ -204,7 +219,7 @@ async def _processar_ia(texto: str, sessao: SessionState) -> str:
     # Só expõe a tool de classificação quando step estiver próximo do mínimo
     # para evitar que a IA identifique o benefício prematuramente
     tools = []
-    if sessao.step + 1 >= _MIN_STEPS_PARA_CONCLUIR:
+    if sessao.step + 1 >= _MIN_STEPS_EARLY:
         tools.append(classificar_beneficio)
     tools.append(extrair_ocr_tool)
     func_map = {t.name: t for t in tools}
@@ -313,7 +328,8 @@ async def _atualizar_sessao_por_tool(nome_tool: str, resultado: str, sessao: Ses
         return
 
     if nome_tool == "classificar_beneficio":
-        if sessao.step >= _MIN_STEPS_PARA_CONCLUIR:
+        confianca = dados.get("confianca", 0)
+        if _pode_classificar(confianca, sessao.step):
             sessao.tipo_beneficio = dados.get("tipo", sessao.tipo_beneficio)
             sessao.esfera = dados.get("esfera", sessao.esfera)
             if sessao.status == SessionStatus.CLASSIFICANDO:
@@ -426,7 +442,7 @@ async def _processar_classificando(texto: str, sessao: SessionState) -> str:
     resultado = classificar(sessao.resumo_caso)
     confianca = resultado["confianca"]
 
-    if confianca >= 0.5 and sessao.step >= _MIN_STEPS_PARA_CONCLUIR:
+    if _pode_classificar(confianca, sessao.step):
         sessao.tipo_beneficio = resultado["tipo"]
         sessao.esfera = resultado["esfera"]
         sessao.step = 0

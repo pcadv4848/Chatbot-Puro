@@ -29,3 +29,11 @@ __pycache__/
 # ── Sistema ──
 .DS_Store
 Thumbs.db
+
+# ── Virtual environment ──
+.venv/
+
+# ── Runtime logs / PIDs ──
+*.log
+*.pid
+run/
