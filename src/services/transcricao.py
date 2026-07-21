@@ -30,10 +30,15 @@ def _obter_modelo() -> Optional["WhisperModel"]:
     if not _DISPONIVEL:
         return None
     if _modelo is None:
-        import torch
-
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-        compute_type = "float16" if device == "cuda" else "int8"
+        device = "cpu"
+        compute_type = "int8"
+        try:
+            import torch
+            if torch.cuda.is_available():
+                device = "cuda"
+                compute_type = "float16"
+        except ImportError:
+            pass
         try:
             _modelo = WhisperModel(_MODELO_NOME, device=device, compute_type=compute_type)
             logger.info("Whisper carregado: %s (%s, %s)", _MODELO_NOME, device, compute_type)

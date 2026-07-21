@@ -23,7 +23,7 @@ class Settings(BaseSettings):
 
     # ── DeepSeek ──
     deepseek_api_key: str = ""
-    deepseek_model: str = "deepseek-chat"
+    deepseek_model: str = "deepseek-v4-pro"
 
     # ── Verboo (fallback) ──
     verboo_api_key: str = ""
@@ -67,7 +67,7 @@ class Settings(BaseSettings):
     cors_origins: str = "*"
 
     # ── Rate limiting ──
-    rate_limit_webhook: str = "10/minute"
+    rate_limit_webhook: str = "100/minute"
 
     # ── Admin Panel ──
     admin_username: str = "admin"
@@ -86,7 +86,6 @@ class Settings(BaseSettings):
 
     # ── Segurança ──
     encrypt_key: str = ""
-    max_ocr_retries: int = 3
     session_timeout_minutes: int = 60
     session_archive_days: int = 30
 

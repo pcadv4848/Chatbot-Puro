@@ -11,21 +11,17 @@ from src.conversation.state import SessionState, SessionStatus
 from src.conversation.prompts import SYSTEM_PROMPT
 from src.agents.tools.classificar import classificar
 from src.agents.tools.validar import validar_dados
-from src.agents.tools.extrair_ocr import processar_midia_ocr
-
 from src.agents.constants import (
     PERGUNTAS_CAMPOS, PERGUNTAS_SIMPLES, VALIDAR_CAMPO,
-    MESES_PT, UF_MAP, PADROES_CAMPO, BENEFICIO_NOME,
+    MESES_PT, UF_MAP, PADROES_CAMPO,
     MAX_TENTATIVAS_CLASSIFICACAO as _MAX_TENTATIVAS_CLASSIFICACAO,
     MIN_STEPS_EARLY_CLASSIFY as _MIN_STEPS_EARLY,
     MIN_STEPS_PARA_CONCLUIR as _MIN_STEPS_PARA_CONCLUIR,
     EARLY_CLASSIFY_CONFIDENCE as _EARLY_CONF,
-    MAX_OCR_RETRY as _MAX_OCR_RETRY,
     TRAFEGO_SAUDACAO as _TRAFEGO_SAUDACAO,
     TRAFEGO_HISTORIA as _TRAFEGO_HISTORIA,
     TRAFEGO_FINALIZAR as _TRAFEGO_FINALIZAR,
     SINAIS_DIFICULDADE as _SINAIS_DIFICULDADE,
-    QUALIDADE_DICAS as _QUALIDADE_DICAS,
     MENSAGEM_NAO_ENTENDI, MENSAGEM_ERRO_IA, MENSAGEM_QUOTA_EXCEDIDA,
     MENSAGEM_FORA_ESCOPO, MENSAGEM_HUMANO, SILENT,
     PERGUNTAS_CLASSIFICACAO as _PERGUNTAS_CLASSIFICACAO,
@@ -44,8 +40,6 @@ from src.agents.text_utils import (
 )
 from src.agents.extraction import (
     extrair_e_salvar_campo as _extrair_e_salvar_campo,
-    detectar_campo as _detectar_campo,
-    parecer_dado as _parece_dado,
 )
 
 # ── Inicializar LLM (DeepSeek > Verboo > Gemini > Claude) ──
@@ -136,22 +130,6 @@ def _pode_classificar(confianca: float, step: int) -> bool:
 
 
 async def _processar_humano(texto: str, sessao: SessionState) -> str:
-    """Processa mensagens em modo silencioso enquanto humano atende.
-
-    Extrai dados do texto, salva na sessao, e quando tiver dados
-    suficientes, gera documentos automaticamente em background.
-    Nao retorna nenhuma mensagem visivel ao usuario.
-    """
-    if sessao.status == SessionStatus.CONCLUIDO:
-        return SILENT
-
-    texto = texto.strip()
-    _extrair_e_salvar_campo(texto, sessao)
-
-    validacao = validar_dados(sessao.dados_cliente, sessao.tipo_beneficio or "outro")
-    if validacao["valido"] and sessao.tipo_beneficio:
-        await _processar_gerando(sessao)
-
     return SILENT
 
 
@@ -209,8 +187,6 @@ async def _processar_ia(texto: str, sessao: SessionState) -> str:
     from langchain_core.messages import ToolMessage
     from src.conversation.storage import salvar_sessao
 
-    from src.agents.tools.extrair_ocr import extrair_dados_ocr as extrair_ocr_tool
-
     @tool
     def classificar_beneficio(texto_cliente: str) -> str:
         """Identifica o tipo de beneficio previdenciario com base no relato do cliente."""
@@ -221,7 +197,6 @@ async def _processar_ia(texto: str, sessao: SessionState) -> str:
     tools = []
     if sessao.step + 1 >= _MIN_STEPS_EARLY:
         tools.append(classificar_beneficio)
-    tools.append(extrair_ocr_tool)
     func_map = {t.name: t for t in tools}
 
     _local_model = _model.bind_tools(tools)
@@ -260,7 +235,7 @@ async def _processar_ia(texto: str, sessao: SessionState) -> str:
         sessao.existing_client = True
         sessao.status = SessionStatus.AGUARDANDO_ADVOGADO
         await salvar_sessao(sessao)
-        return MENSAGEM_HUMANO.format(beneficio="Benefício")
+        return MENSAGEM_HUMANO
 
     for _ in range(2):
         if not hasattr(response, "tool_calls") or not response.tool_calls:
@@ -295,8 +270,7 @@ async def _processar_ia(texto: str, sessao: SessionState) -> str:
                 sessao.existing_client = True
                 sessao.step = 0
                 await salvar_sessao(sessao)
-                beneficio = BENEFICIO_NOME.get(sessao.tipo_beneficio or "outro", "Benefício")
-                return MENSAGEM_HUMANO.format(beneficio=beneficio)
+                return MENSAGEM_HUMANO
 
         if not alguma_executou:
             break
@@ -338,22 +312,6 @@ async def _atualizar_sessao_por_tool(nome_tool: str, resultado: str, sessao: Ses
     elif nome_tool == "validar_dados_cliente":
         pass
 
-    elif nome_tool == "extrair_dados_ocr":
-        if isinstance(dados, dict):
-            tipo_doc = dados.get("tipo_documento", "")
-            if tipo_doc != "desconhecido":
-                sessao.ocr_retry_count = 0
-                dados_rg = dados.get("dados_rg") or {}
-                dados_cpf = dados.get("dados_cpf") or {}
-                dados_end = dados.get("dados_endereco") or {}
-                for d in (dados_rg, dados_cpf, dados_end):
-                    if isinstance(d, dict):
-                        for k, v in d.items():
-                            if v and k not in sessao.dados_cliente:
-                                sessao.dados_cliente[k] = v
-            else:
-                sessao.ocr_retry_count += 1
-
 
 # ═══════════════════════════════════════════════════════════
 #  Modo fallback (máquina de estados + palavras-chave)
@@ -381,8 +339,7 @@ async def _processar_fallback(texto: str, sessao: SessionState) -> str:
         sessao.status = SessionStatus.AGUARDANDO_ADVOGADO
         from src.conversation.storage import salvar_sessao
         await salvar_sessao(sessao)
-        beneficio = BENEFICIO_NOME.get(sessao.tipo_beneficio or "outro", "Benefício")
-        return MENSAGEM_HUMANO.format(beneficio=beneficio)
+        return MENSAGEM_HUMANO
 
     elif sessao.status == SessionStatus.AGUARDANDO_DOC:
         return await _processar_aguardando_doc(sessao)
@@ -406,8 +363,6 @@ async def _processar_fallback(texto: str, sessao: SessionState) -> str:
         sessao.status = SessionStatus.AGUARDANDO_ADVOGADO
         await salvar_sessao(sessao)
         return (
-            "Entendo! Infelizmente nao consegui identificar exatamente "
-            "qual beneficio se aplica ao seu caso. "
             "Vamos dar continuidade ao atendimento."
         )
 
@@ -446,17 +401,14 @@ async def _processar_classificando(texto: str, sessao: SessionState) -> str:
         sessao.tipo_beneficio = resultado["tipo"]
         sessao.esfera = resultado["esfera"]
         sessao.step = 0
-        if not sessao.documentos_faltantes:
-            sessao.documentos_faltantes = ["RG", "CPF", "Comprovante de endereço"]
         from src.services.attended_clients import mark_attended
         await mark_attended(sessao.whatsapp_id)
         sessao.human_attending = True
         sessao.existing_client = True
         sessao.status = SessionStatus.AGUARDANDO_ADVOGADO
         await salvar_sessao(sessao)
-        beneficio = BENEFICIO_NOME.get(sessao.tipo_beneficio or "outro", "Benefício")
         return (
-            f"Seu caso sobre {beneficio} foi identificado. "
+            "Vamos dar continuidade ao atendimento. "
             "Para agilizar o preparo dos seus documentos, "
             "envie fotos do seu RG e CPF por aqui mesmo. "
             "Assim que tiver os dados, começamos a gerar tudo!"
@@ -471,8 +423,7 @@ async def _processar_classificando(texto: str, sessao: SessionState) -> str:
         sessao.motivo_pausa = "nao foi possivel identificar o beneficio"
         await salvar_sessao(sessao)
         return (
-            "Nao consegui identificar exatamente qual beneficio se aplica "
-            "ao seu caso. Vamos dar continuidade ao atendimento."
+            "Vamos dar continuidade ao atendimento."
         )
 
     idx_pergunta = min(sessao.step - 1, len(_PERGUNTAS_CLASSIFICACAO) - 1)
@@ -513,13 +464,10 @@ async def _processar_confirmando(texto: str, sessao: SessionState) -> str:
     from src.conversation.storage import salvar_sessao
 
     if _verificar_sim(texto):
-        nome = BENEFICIO_NOME.get(sessao.tipo_beneficio or "", "Benefício")
-        esfera = sessao.esfera or "adm"
         sessao.status = SessionStatus.COLETANDO_DADOS
         sessao.step = 0
         msg = (
-            f"Ótimo! Vou preparar os documentos para {nome} "
-            f"(via {'administrativa' if esfera == 'adm' else 'judicial'})."
+            "Vamos dar continuidade ao atendimento."
             " Vou precisar de alguns dados seus:"
         )
         primeiro = _perguntar_proximo_campo(sessao)
@@ -543,9 +491,8 @@ async def _processar_confirmando(texto: str, sessao: SessionState) -> str:
             " auxílio-doença, aposentadoria, pensão ou revisão de benefício."
         )
 
-    nome = BENEFICIO_NOME.get(sessao.tipo_beneficio or "", "Benefício")
     return (
-        f"Voce precisa de **{nome}**? "
+        "As informações que você forneceu estão corretas? "
         "Responda **sim** ou **nao** para eu continuar."
     )
 
@@ -602,8 +549,7 @@ async def _processar_trafego_pago(texto: str, sessao: SessionState) -> str:
     await mark_attended(sessao.whatsapp_id)
     await salvar_sessao(sessao)
 
-    beneficio = BENEFICIO_NOME.get(sessao.tipo_beneficio or "outro", "Benefício")
-    return _msg_variada(_TRAFEGO_FINALIZAR, sessao, nome=nome) + " " + MENSAGEM_HUMANO.format(beneficio=beneficio)
+    return _msg_variada(_TRAFEGO_FINALIZAR, sessao, nome=nome)
 
 
 # ── Estado: coletando_dados ──
@@ -723,95 +669,12 @@ def _perguntar_proximo_campo(sessao: SessionState,
 
 async def _processar_aguardando_doc(sessao: SessionState) -> str:
     from src.conversation.storage import salvar_sessao
-
-    if sessao.documentos_faltantes:
-        docs_formatados = "\n".join(
-            f"  - {d}" for d in sessao.documentos_faltantes
-        )
-        await salvar_sessao(sessao)
-        return (
-            "Ótimo, dados salvos! Agora preciso que você envie FOTO"
-            " dos seguintes documentos:\n"
-            f"{docs_formatados}\n"
-            "Pode enviar as fotos aqui mesmo pelo WhatsApp."
-            " Assim que receber, começo a gerar seus documentos."
-            " Dica: Tire a foto em local iluminado, sem flash,"
-            " com o documento bem esticado."
-        )
-
     sessao.status = SessionStatus.GERANDO
     await salvar_sessao(sessao)
     return await _processar_gerando(sessao)
 
 
-async def processar_midia(sessao: SessionState, midia_id: str) -> str:
-    from src.conversation.storage import salvar_sessao
 
-    if sessao.human_attending:
-        dados_extraidos, msg_ocr, erro_servico, tipo_doc = await processar_midia_ocr(midia_id)
-        if dados_extraidos:
-            sessao.dados_cliente.update(dados_extraidos)
-        await salvar_sessao(sessao)
-        return SILENT
-
-    dados_extraidos, msg_ocr, erro_servico, tipo_doc = await processar_midia_ocr(midia_id)
-
-    if erro_servico:
-        return "Recebi sua imagem!  Vou tentar novamente em alguns instantes."
-
-    if not dados_extraidos:
-        sessao.ocr_retry_count += 1
-        if sessao.ocr_retry_count >= _MAX_OCR_RETRY:
-            sessao.ocr_retry_count = _MAX_OCR_RETRY
-            return (
-                "Infelizmente não estou conseguindo ler sua imagem mesmo"
-                " após várias tentativas."
-                " Tente: tirar a foto em local bem iluminado,"
-                " manter o celular parado e focado,"
-                " e enquadrar todo o documento."
-                " Se preferir, pode trazer os documentos pessoalmente"
-                " no escritório que nossos atendentes te ajudam."
-            )
-
-        dica = _QUALIDADE_DICAS[(sessao.ocr_retry_count - 1) % len(_QUALIDADE_DICAS)]
-        return (
-            f"Não consegui ler direito a imagem. {dica}"
-            f" Pode tentar novamente? "
-        )
-
-    sessao.ocr_retry_count = 0
-    sessao.dados_cliente.update(dados_extraidos)
-
-    if midia_id not in sessao.documentos_recebidos:
-        sessao.documentos_recebidos.append(midia_id)
-    if sessao.documentos_faltantes and tipo_doc and tipo_doc != "desconhecido":
-        mapa_doc = {
-            "rg": ["rg", "identidade"],
-            "cpf": ["cpf", "cadastro de pessoa fisica"],
-            "comprovante_endereco": ["comprovante de residencia", "comprovante de endereco", "endereco"],
-        }
-        palavras_chave = mapa_doc.get(tipo_doc, [])
-        encontrou = False
-        for i, doc in enumerate(sessao.documentos_faltantes):
-            if any(p in doc.lower() for p in palavras_chave):
-                sessao.documentos_faltantes.pop(i)
-                encontrou = True
-                break
-        if not encontrou:
-            sessao.documentos_faltantes.pop(0)
-    elif sessao.documentos_faltantes:
-        sessao.documentos_faltantes.pop(0)
-
-    if sessao.documentos_faltantes:
-        docs_formatados = "\n".join(
-            f"  - {d}" for d in sessao.documentos_faltantes
-        )
-        await salvar_sessao(sessao)
-        return f"{msg_ocr} Ainda preciso de:\n{docs_formatados}"
-
-    sessao.status = SessionStatus.GERANDO
-    await salvar_sessao(sessao)
-    return await _processar_gerando(sessao)
 
 
 # ── Estado: gerando ──
@@ -843,5 +706,4 @@ async def _processar_gerando(sessao: SessionState, force: bool = False) -> str:
     await mark_attended(sessao.whatsapp_id)
     await salvar_sessao(sessao)
 
-    beneficio = BENEFICIO_NOME.get(sessao.tipo_beneficio or "outro", "Benefício")
-    return f"Seu caso sobre {beneficio} foi registrado com sucesso!"
+    return "Seu caso foi registrado com sucesso!"

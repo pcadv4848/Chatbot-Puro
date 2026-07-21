@@ -11,7 +11,7 @@ set -euo pipefail
 
 REPO_URL="${REPO_URL:-https://github.com/pcadv4848/Chatbot-Puro.git}"
 BRANCH="${BRANCH:-master}"
-INSTALL_DIR="${INSTALL_DIR:-$HOME/chatbot-puro}"
+INSTALL_DIR="${INSTALL_DIR:-$HOME/chatbot/chatbot-puro}"
 SERVER_IP="${SERVER_IP:-}"
 PORT_CHATBOT="${PORT:-8000}"
 

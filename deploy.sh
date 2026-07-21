@@ -11,7 +11,7 @@ set -euo pipefail
 
 SERVER_IP="${SERVER_IP:-}"
 BRANCH="${BRANCH:-master}"
-INSTALL_DIR="${INSTALL_DIR:-$HOME/chatbot-puro}"
+INSTALL_DIR="${INSTALL_DIR:-$HOME/chatbot/chatbot-puro}"
 PORT_CHATBOT="${PORT:-8000}"
 
 echo "=== 1. Atualizando código ==="

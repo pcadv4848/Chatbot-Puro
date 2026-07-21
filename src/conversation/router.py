@@ -1,9 +1,11 @@
 import asyncio
+import base64
 import hashlib
 import hmac
 import json
 import logging
 import re
+import time
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -18,7 +20,7 @@ from src.conversation.storage import (
     arquivar_sessoes_inativas,
     STORAGE_DIR,
 )
-from src.agents.supervisor import processar, processar_midia, SILENT
+from src.agents.supervisor import processar, SILENT
 from src.config import settings
 from src.engine.rate_limit import limiter
 from src.services.transcricao import transcrever_audio_async, disponivel as whisper_disponivel
@@ -42,6 +44,15 @@ _bot_phone_number: str | None = None
 _set_cmd_storage_dir(STORAGE_DIR)
 
 from src.conversation.admin_commands import ADMIN_ALIASES as _ADMIN_ALIASES, ADMIN_INPUTS as _ADMIN_INPUTS
+
+
+def _is_admin(whatsapp_id: str) -> bool:
+    admin_id = settings.admin_whatsapp or ""
+    if admin_id and mesmo_telefone(whatsapp_id, admin_id):
+        return True
+    if _bot_phone_number and mesmo_telefone(whatsapp_id, _bot_phone_number):
+        return True
+    return False
 
 
 async def _descobrir_bot_phone() -> str | None:
@@ -106,6 +117,7 @@ async def verificar_webhook_get(
 
 
 def _parse_openwa_payload(payload: dict) -> list[dict]:
+    global _bot_phone_number
     event = payload.get("event", "")
     data = payload.get("data") or payload.get("payload") or {}
     if event == "message.sent":
@@ -115,7 +127,11 @@ def _parse_openwa_payload(payload: dict) -> list[dict]:
         if from_jid and to_jid:
             sender = _extrair_whatsapp_id(from_jid)
             target = _extrair_whatsapp_id(to_jid)
-            admin_id = settings.admin_whatsapp or _bot_phone_number or ""
+            if not _bot_phone_number:
+                _bot_phone_number = sender
+                logger.info("Número do bot descoberto via message.sent: %s", _bot_phone_number)
+
+            admin_id = settings.admin_whatsapp or ""
             if admin_id and mesmo_telefone(sender, admin_id):
                 if any(body.startswith(cmd) for cmd in _ADMIN_INPUTS):
                     return [{"id": data.get("id", ""), "from": target,
@@ -123,6 +139,14 @@ def _parse_openwa_payload(payload: dict) -> list[dict]:
                 return [{"id": data.get("id", ""), "from": target,
                          "type": "text", "body": body, "admin_cmd": True,
                          "_ativar_silencioso": True}]
+
+            if _bot_phone_number and mesmo_telefone(sender, _bot_phone_number):
+                now = time.time()
+                last_sent = _ultimos_envios.get(target)
+                if last_sent is None or (now - last_sent) > 10:
+                    logger.info("Humano detectado enviando do número do bot para %s — marcando como atendido", target)
+                    return [{"id": data.get("id", ""), "from": target,
+                             "type": "text", "body": body, "_ativar_silencioso": True}]
         return []
     if event not in ("message.received", "messages.upsert"):
         return []
@@ -138,17 +162,20 @@ def _parse_openwa_payload(payload: dict) -> list[dict]:
     has_media = data.get("hasMedia", False)
 
     tipos_midia = {"image": "image", "video": "video", "document": "document", "audio": "audio",
-                   "ptt": "audio", "sticker": "image"}
+                   "ptt": "audio", "voice": "audio", "sticker": "image"}
 
     if has_media or msg_type in tipos_midia:
         tipo = tipos_midia.get(msg_type, msg_type)
         midia_id = data.get("mediaId", "") or data.get("id", "")
+        raw_media = data.get("media") or {}
+        midia_data = raw_media.get("data", "") if isinstance(raw_media, dict) else ""
         return [{
             "id": msg_id or midia_id,
             "from": whatsapp_id,
             "type": tipo,
             "body": body,
             "midia_id": midia_id,
+            "midia_data": midia_data,
         }]
 
     if body:
@@ -211,6 +238,8 @@ async def webhook_whatsapp(request: Request):
             logger.warning("Webhook OpenWA rejeitado: assinatura inválida")
             return {"status": "ok"}
         mensagens = _parse_openwa_payload(payload)
+        if not mensagens:
+            logger.info("Webhook OpenWA ignorado: event=%s tipo=%s", payload.get("event"), payload.get("data", {}).get("type"))
     elif "entry" in payload:
         from src.services.signing import verificar_webhook_meta
         sig = request.headers.get("x-hub-signature-256")
@@ -222,7 +251,6 @@ async def webhook_whatsapp(request: Request):
         logger.warning("Formato de webhook desconhecido: %s", list(payload.keys())[:3])
         return {"status": "ok"}
 
-    import time
     task_id = f"{evento}_{time.time()}"
     track_entry = {"id": task_id, "inicio": datetime.now(timezone.utc).isoformat(),
                    "mensagens": len(mensagens), "status": "iniciado"}
@@ -241,6 +269,7 @@ async def webhook_whatsapp(request: Request):
                     msg_type = msg["type"]
                     body = msg.get("body", "")
                     midia_id = msg.get("midia_id")
+                    midia_data = msg.get("midia_data", "")
                     admin_cmd = msg.get("admin_cmd", False)
 
                     if msg_id and whatsapp_id:
@@ -248,12 +277,26 @@ async def webhook_whatsapp(request: Request):
                         if hasattr(sessao, "processed_message_ids") and msg_id in sessao.processed_message_ids:
                             continue
 
-                    admin_id = settings.admin_whatsapp or _bot_phone_number or ""
-                    is_admin = admin_id and mesmo_telefone(whatsapp_id, admin_id)
+                    if sessao and not sessao.existing_client:
+                        from src.services.attended_clients import is_attended
+                        if await is_attended(whatsapp_id):
+                            sessao.existing_client = True
+                            logger.info("Contato %s marcado como existing_client via attended_clients", whatsapp_id)
+
+                    is_admin = _is_admin(whatsapp_id)
                     logger.debug("MSG %s: existing_client=%s, is_admin=%s, admin_cmd=%s, type=%s, body='%s'",
                                  whatsapp_id, sessao.existing_client if sessao else None, is_admin, admin_cmd, msg_type, body[:50] if body else "")
                     if sessao and sessao.existing_client and not is_admin and not admin_cmd:
                         logger.info("BLOQUEADO existing_client: %s (body='%s')", whatsapp_id, body[:80] if body else "")
+                        if sessao.status in (SessionStatus.CONCLUIDO, SessionStatus.ARQUIVADO):
+                            sessao.conversa.append({"role": "user", "content": body or f"[{msg_type}: {midia_id}]"})
+                            if msg_id:
+                                if msg_id not in sessao.processed_message_ids:
+                                    sessao.processed_message_ids.append(msg_id)
+                                    if len(sessao.processed_message_ids) > 100:
+                                        sessao.processed_message_ids = sessao.processed_message_ids[-50:]
+                            await salvar_sessao(sessao)
+                            continue
                         if msg_type == "text" and body:
                             if body.upper().strip(".!?") == "RESETAR":
                                 await processar_mensagem_texto(whatsapp_id, body)
@@ -266,8 +309,26 @@ async def webhook_whatsapp(request: Request):
                                     from src.agents.supervisor import _processar_humano
                                     await _processar_humano(body, sessao)
                         elif msg_type in ("image", "document") and midia_id:
-                            await processar_midia(sessao, midia_id)
+                            await salvar_sessao(sessao)
                             sessao.conversa.append({"role": "user", "content": f"[midia: {midia_id}]"})
+                        elif msg_type == "audio" and midia_id and whisper_disponivel():
+                            try:
+                                if midia_data:
+                                    dados = base64.b64decode(midia_data)
+                                else:
+                                    dados = await asyncio.wait_for(baixar_midia(midia_id), timeout=30)
+                                texto = await asyncio.wait_for(transcrever_audio_async(dados), timeout=120)
+                                if texto:
+                                    sessao.conversa.append({"role": "user", "content": f"[áudio transcrito]: {texto}"})
+                                    logger.info("Áudio de existing_client %s transcrito e arquivado (sem resposta automática)", whatsapp_id)
+                                else:
+                                    logger.warning("Transcrição retornou vazia para %s (atendimento)", whatsapp_id)
+                            except asyncio.TimeoutError:
+                                logger.error("Timeout ao processar áudio de %s (atendimento)", whatsapp_id)
+                            except Exception:
+                                logger.exception("Erro ao processar áudio durante atendimento")
+                        elif msg_type == "audio" and midia_id:
+                            logger.info("Whisper não disponível — áudio de %s ignorado (atendimento)", whatsapp_id)
                         if msg_id:
                             if msg_id not in sessao.processed_message_ids:
                                 sessao.processed_message_ids.append(msg_id)
@@ -297,13 +358,25 @@ async def webhook_whatsapp(request: Request):
                             await salvar_sessao(sessao)
                             continue
                         if sessao.human_attending:
+                            logger.info("human_attending ativo — áudio de %s ignorado pelo bot", whatsapp_id)
                             await salvar_sessao(sessao)
+                            continue
                         elif msg_type == "audio" and midia_id and whisper_disponivel():
                             try:
-                                dados = await baixar_midia(midia_id)
-                                texto = await transcrever_audio_async(dados)
+                                if midia_data:
+                                    dados = base64.b64decode(midia_data)
+                                else:
+                                    dados = await asyncio.wait_for(baixar_midia(midia_id), timeout=30)
+                                texto = await asyncio.wait_for(transcrever_audio_async(dados), timeout=120)
                                 if texto:
-                                    await processar_mensagem_texto(whatsapp_id, texto)
+                                    await asyncio.wait_for(
+                                        processar_mensagem_texto(whatsapp_id, texto, content_label="[áudio]"),
+                                        timeout=120,
+                                    )
+                                else:
+                                    logger.warning("Transcrição retornou vazia para %s", whatsapp_id)
+                            except asyncio.TimeoutError:
+                                logger.error("Timeout ao processar áudio de %s", whatsapp_id)
                             except Exception:
                                 logger.exception("Erro ao processar áudio")
                         else:
@@ -371,23 +444,15 @@ async def _obter_ou_criar_sessao(whatsapp_id: str) -> SessionState:
     if sessao is None:
         logger.debug("_obter_ou_criar_sessao(%s): NOVA sessao", whatsapp_id)
         sessao = SessionState(whatsapp_id=whatsapp_id)
-        try:
-            from src.services.attended_clients import is_attended
-            attended = await is_attended(whatsapp_id)
-            sessao.existing_client = attended
-            logger.debug("_obter_ou_criar_sessao(%s): attended=%s", whatsapp_id, attended)
-        except Exception as e:
-            logger.error("_obter_ou_criar_sessao(%s): erro is_attended: %s", whatsapp_id, e)
     else:
         logger.debug("_obter_ou_criar_sessao(%s): carregada do disco, status=%s, existing_client=%s",
                      whatsapp_id, sessao.status.value, sessao.existing_client)
         sessao.whatsapp_id = whatsapp_id
+        sessao.existing_client = True
+        logger.debug("_obter_ou_criar_sessao(%s): sessao existente no disco → existing_client=True", whatsapp_id)
         if sessao.status == SessionStatus.PAUSADO:
             logger.info("Sessão retomada para %s", whatsapp_id)
         elif sessao.status == SessionStatus.ARQUIVADO:
-            sessao.status = SessionStatus.CLASSIFICANDO
-            sessao.motivo_pausa = None
-            sessao.existing_client = False
             logger.info("Sessão arquivada reativada para %s", whatsapp_id)
 
     async with _sessoes_lock:
@@ -422,18 +487,19 @@ async def _verificar_inatividade(sessao: SessionState, whatsapp_id: str) -> Opti
 
 
 async def processar_mensagem_texto(whatsapp_id: str, texto: str, admin_cmd: bool = False,
-                                   ativar_silencioso: bool = False):
+                                   ativar_silencioso: bool = False,
+                                   content_label: str | None = None):
     sessao = await _obter_ou_criar_sessao(whatsapp_id)
+    _user_content = content_label or texto
 
-    admin_id = settings.admin_whatsapp or _bot_phone_number or ""
-    is_admin = admin_id and mesmo_telefone(whatsapp_id, admin_id)
+    is_admin = _is_admin(whatsapp_id)
 
     if not admin_cmd and is_admin:
         admin_cmd = True
 
     cmd_resposta = await _admin_commands(texto, sessao, admin_cmd=admin_cmd, cache=sessoes_ativas)
     if cmd_resposta is not None:
-        sessao.conversa.append({"role": "user", "content": texto})
+        sessao.conversa.append({"role": "user", "content": _user_content})
         sessao.conversa.append({"role": "assistant", "content": cmd_resposta})
         if admin_cmd and not is_admin:
             logger.info("Admin cmd via message.sent: %s na sessão %s", texto, whatsapp_id)
@@ -468,7 +534,7 @@ async def processar_mensagem_texto(whatsapp_id: str, texto: str, admin_cmd: bool
             "Sem problemas!  Seu cadastro foi salvo. "
             "Quando quiser retomar, é só me chamar aqui."
         )
-        sessao.conversa.append({"role": "user", "content": texto})
+        sessao.conversa.append({"role": "user", "content": _user_content})
         sessao.conversa.append({"role": "assistant", "content": resposta})
         await _salvar_e_enviar(sessao, whatsapp_id, resposta)
         return
@@ -488,7 +554,7 @@ async def processar_mensagem_texto(whatsapp_id: str, texto: str, admin_cmd: bool
     if is_admin and sessao.existing_client:
         sessao.existing_client = False
 
-    sessao.conversa.append({"role": "user", "content": texto})
+    sessao.conversa.append({"role": "user", "content": _user_content})
 
     logger.info("DEBUG pre-processar: step=%s, midia=%s, human=%s, existing=%s",
                  sessao.step, sessao.midia_inicial_enviada, sessao.human_attending, sessao.existing_client)
@@ -510,41 +576,18 @@ async def processar_mensagem_midia(whatsapp_id: str, midia_id: str):
         await _salvar_e_enviar(sessao, whatsapp_id, msg_inatividade)
         return
 
-    if sessao.status == SessionStatus.AGUARDANDO_ADVOGADO:
-        await processar_midia(sessao, midia_id)
-        sessao.conversa.append({"role": "user", "content": f"[midia: {midia_id}]"})
-        await salvar_sessao(sessao)
-        return
-
-    if sessao.status in (SessionStatus.COLETANDO_DADOS, SessionStatus.CLASSIFICANDO):
-        msg_ocr = await processar_midia(sessao, midia_id)
-        sessao.conversa.append({"role": "user", "content": f"[midia: {midia_id}]"})
-        sessao.conversa.append({"role": "assistant", "content": msg_ocr})
-        await _salvar_e_enviar(sessao, whatsapp_id, msg_ocr)
-        return
-
     if sessao.status == SessionStatus.PAUSADO:
         sessao.status = SessionStatus.CLASSIFICANDO if not sessao.tipo_beneficio else SessionStatus.COLETANDO_DADOS
         sessao.motivo_pausa = None
-        msg_ocr = await processar_midia(sessao, midia_id)
+        nome = sessao.dados_cliente.get("nome")
+        resume_msg = f"Bem-vindo de volta, {nome}!" if nome else "Bem-vindo de volta!"
         sessao.conversa.append({"role": "user", "content": f"[midia: {midia_id}]"})
-        sessao.conversa.append({"role": "assistant", "content": msg_ocr})
-        await _salvar_e_enviar(sessao, whatsapp_id, msg_ocr)
+        sessao.conversa.append({"role": "assistant", "content": resume_msg})
+        await _salvar_e_enviar(sessao, whatsapp_id, resume_msg)
         return
 
-    if sessao.status in (SessionStatus.CONCLUIDO, SessionStatus.ARQUIVADO):
-        resposta = "Seu processo já foi concluído. Se precisar de ajuda, é só falar!"
-        sessao.conversa.append({"role": "user", "content": f"[midia: {midia_id}]"})
-        sessao.conversa.append({"role": "assistant", "content": resposta})
-        await _salvar_e_enviar(sessao, whatsapp_id, resposta)
-        return
-
-    if sessao.status == SessionStatus.REVISAO_ADVOGADO:
-        resposta = "Seus documentos estão sendo processados. Em breve retornamos o contato."
-        sessao.conversa.append({"role": "user", "content": f"[midia: {midia_id}]"})
-        sessao.conversa.append({"role": "assistant", "content": resposta})
-        await _salvar_e_enviar(sessao, whatsapp_id, resposta)
-        return
+    sessao.conversa.append({"role": "user", "content": f"[midia: {midia_id}]"})
+    await salvar_sessao(sessao)
 
 
 async def tarefa_arquivamento():

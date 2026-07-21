@@ -85,6 +85,9 @@ async def lifespan(app: FastAPI):
         else:
             logger.info("Sessão OpenWA é nova — ainda não há contatos sincronizados")
 
+        from src.conversation.router import _descobrir_bot_phone
+        await _descobrir_bot_phone()
+
         heartbeat_task = asyncio.create_task(tarefa_heartbeat())
         logger.info("Heartbeat OpenWA iniciado")
     else:

@@ -8,7 +8,7 @@ from typing import Optional
 from sqlalchemy import select, and_
 from src.conversation.state import SessionState, SessionStatus
 from src.config import settings
-from src.engine.crypto import encrypt_dict, decrypt_dict, encrypt_json, decrypt_json, _get_fernet
+from src.engine.crypto import decrypt_dict, decrypt_json
 from src.db.models import Sessao as SessaoModel
 from src.db.session import async_session
 
@@ -32,32 +32,16 @@ def _serializar_json(sessao: SessionState) -> dict:
         "status": sessao.status.value,
         "tipo_beneficio": sessao.tipo_beneficio,
         "esfera": sessao.esfera,
-        "dados_cliente": sessao.dados_cliente,
-        "documentos_recebidos": sessao.documentos_recebidos,
-        "documentos_faltantes": sessao.documentos_faltantes,
-        "conversa": sessao.conversa,
         "step": sessao.step,
         "ultima_atividade": sessao.ultima_atividade,
-        "ocr_retry_count": sessao.ocr_retry_count,
         "motivo_pausa": sessao.motivo_pausa,
-        "documentos_gerados": sessao.documentos_gerados,
-        "rascunho_rural_text": sessao.rascunho_rural_text,
-        "periodos_trabalho_rural": sessao.periodos_trabalho_rural,
-        "processed_message_ids": sessao.processed_message_ids,
         "trafego_pago": sessao.trafego_pago,
-        "resumo_caso": sessao.resumo_caso,
-        "historico_perguntas": sessao.historico_perguntas,
         "simplify_mode": sessao.simplify_mode,
         "human_attending": sessao.human_attending,
         "existing_client": sessao.existing_client,
         "reminder_count": sessao.reminder_count,
         "midia_inicial_enviada": sessao.midia_inicial_enviada,
     }
-    if dados["dados_cliente"]:
-        dados["dados_cliente"] = encrypt_dict(dados["dados_cliente"])
-    f = _get_fernet()
-    if f is not None and sessao.conversa:
-        dados["conversa"] = encrypt_json(sessao.conversa)
     return dados
 
 
@@ -81,12 +65,9 @@ def _desserializar_json(dados: dict) -> SessionState:
         tipo_beneficio=dados.get("tipo_beneficio"),
         esfera=dados.get("esfera"),
         dados_cliente=dados_cliente,
-        documentos_recebidos=dados.get("documentos_recebidos", []),
-        documentos_faltantes=dados.get("documentos_faltantes", []),
         conversa=conversa,
         step=dados.get("step", 0),
         ultima_atividade=dados.get("ultima_atividade", ""),
-        ocr_retry_count=dados.get("ocr_retry_count", 0),
         motivo_pausa=dados.get("motivo_pausa"),
         documentos_gerados=dados.get("documentos_gerados", []),
         rascunho_rural_text=dados.get("rascunho_rural_text"),

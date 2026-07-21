@@ -8,8 +8,8 @@ set -euo pipefail
 
 REPO_URL="https://github.com/pcadv4848/Chatbot-Puro.git"
 BRANCH="master"
-INSTALL_DIR="$HOME/chatbot-puro"
-OPENWA_DIR="$HOME/openwa"
+INSTALL_DIR="$HOME/chatbot/chatbot-puro"
+OPENWA_DIR="$HOME/chatbot/OpenWA"
 
 echo "=== 1. Instalando dependências do sistema ==="
 sudo apt-get update

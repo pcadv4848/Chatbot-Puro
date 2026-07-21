@@ -37,7 +37,8 @@ ADMIN_ALIASES: dict[str, str] = {
 
 async def processar_admin_commands(texto: str, sessao: SessionState, admin_cmd: bool = False,
                                    cache: dict | None = None) -> str | None:
-    admin_id = settings.admin_whatsapp or _get_bot_phone() or ""
+    admin_id = settings.admin_whatsapp or ""
+    bot_phone = _get_bot_phone() or ""
 
     # ── RESETAR: disponível para qualquer usuário ──
     if texto.upper().strip(".!?") == "RESETAR":
@@ -50,9 +51,9 @@ async def processar_admin_commands(texto: str, sessao: SessionState, admin_cmd: 
         return "Conversa resetada! Vamos comecar do zero. Como voce se chama?"
 
     # ── Demais comandos: apenas admin ──
-    if not admin_id:
+    if not admin_id and not bot_phone:
         return None
-    if not admin_cmd and not mesmo_telefone(sessao.whatsapp_id, admin_id):
+    if not admin_cmd and not mesmo_telefone(sessao.whatsapp_id, admin_id) and not mesmo_telefone(sessao.whatsapp_id, bot_phone):
         return None
 
     texto = ADMIN_ALIASES.get(texto, texto)

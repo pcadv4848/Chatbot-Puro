@@ -26,12 +26,9 @@ class SessionState:
     tipo_beneficio: Optional[str] = None
     esfera: Optional[str] = None
     dados_cliente: dict = field(default_factory=dict)
-    documentos_recebidos: list = field(default_factory=list)
-    documentos_faltantes: list = field(default_factory=list)
     conversa: list = field(default_factory=list)
     step: int = 0
     ultima_atividade: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
-    ocr_retry_count: int = 0
     motivo_pausa: Optional[str] = None
     documentos_gerados: list = field(default_factory=list)
     rascunho_rural_text: Optional[str] = None

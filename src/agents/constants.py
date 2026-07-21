@@ -6,7 +6,6 @@ import re
 
 
 from src.conversation.state import SessionStatus
-from src.config import settings
 from src.agents.tools.validar import validar_cpf_formatado, validar_rg, validar_cep, validar_telefone, validar_email
 # ── Perguntas para cada campo ──
 PERGUNTAS_CAMPOS: dict[str, str] = {
@@ -135,7 +134,6 @@ MAX_TENTATIVAS_CLASSIFICACAO = 30
 MIN_STEPS_EARLY_CLASSIFY = 6
 MIN_STEPS_PARA_CONCLUIR = 14
 EARLY_CLASSIFY_CONFIDENCE = 0.7
-MAX_OCR_RETRY = settings.max_ocr_retries
 
 # ── Mensagens do fluxo de tráfego pago ──
 TRAFEGO_SAUDACAO = [
@@ -170,15 +168,6 @@ SINAIS_DIFICULDADE = frozenset({
     "nao sei ler", "sou lerdo", "nao sou estudado",
 })
 
-# ── Dicas de qualidade para OCR ──
-QUALIDADE_DICAS = [
-    " Tire a foto em um local bem iluminado, com o documento "
-    "esticado e sem sombras.",
-    " Mantenha o celular parado e espere o foco ficar nítido "
-    "antes de bater a foto.",
-    " Enquadre todo o documento, sem cortar bordas.",
-]
-
 # ── Mensagens fixas ──
 MENSAGEM_NAO_ENTENDI = "Não entendi. Pode repetir? "
 
@@ -193,14 +182,11 @@ MENSAGEM_QUOTA_EXCEDIDA = (
 )
 
 MENSAGEM_FORA_ESCOPO = (
-    "Ola! Pelo que voce descreveu, nao consegui identificar"
-    " qual beneficio se aplica ao seu caso."
-    " Vamos dar continuidade ao atendimento."
+    "Vamos dar continuidade ao atendimento."
 )
 
 MENSAGEM_HUMANO = (
-    "Seu caso sobre {beneficio} foi identificado."
-    " Vamos dar continuidade ao atendimento por aqui mesmo."
+    "Vamos dar continuidade ao atendimento por aqui mesmo."
 )
 
 SILENT = "__SILENT__"

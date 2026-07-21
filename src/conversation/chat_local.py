@@ -1,17 +1,13 @@
 import asyncio
 import logging
 import uuid
-from io import BytesIO
 
-from fastapi import APIRouter, Form, Request, UploadFile
+from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
-from src.agents.supervisor import processar, processar_midia, SILENT
-from src.agents.tools.extrair_ocr import _processar_imagem
+from src.agents.supervisor import processar, SILENT
 from src.conversation.state import SessionState, SessionStatus
 from src.engine.rate_limit import limiter
-
-MAX_UPLOAD_SIZE = 10 * 1024 * 1024
 
 logger = logging.getLogger(__name__)
 
@@ -235,43 +231,4 @@ async def enviar_mensagem(request: Request, session_id: str = Form(...), texto: 
     return JSONResponse({"resposta": resposta})
 
 
-@router.post("/api/media")
-@limiter.limit("10/minute")
-async def enviar_media(request: Request, session_id: str = Form(...), file: UploadFile | None = None):
-    sessao = _get_or_create_session(session_id)
 
-    if file is None:
-        return JSONResponse({"resposta": "Nenhum arquivo recebido. "}, status_code=400)
-
-    if file.content_type and not file.content_type.startswith("image/"):
-        return JSONResponse({"resposta": "Formato não suportado. Envie apenas imagens. "}, status_code=400)
-
-    try:
-        conteudo = await file.read()
-        if len(conteudo) > MAX_UPLOAD_SIZE:
-            return JSONResponse({
-                "resposta": f"Arquivo muito grande! Máximo permitido: {MAX_UPLOAD_SIZE // (1024*1024)}MB. "
-            }, status_code=400)
-
-        if sessao.human_attending:
-            return JSONResponse({"resposta": ""})
-
-        resultado = await _processar_imagem(conteudo)
-
-        if resultado.tipo_documento.name == "desconhecido":
-            return JSONResponse({
-                "resposta": "Recebi sua imagem!  Mas não consegui identificar "
-                           "o tipo de documento. Pode tentar com uma foto mais nítida?"
-            })
-
-        dados = resultado.para_dados_cliente()
-        sessao.dados_cliente.update(dados)
-        campos = ", ".join(dados.keys())
-        msg = f"Recebi seu {resultado.tipo_documento.name}!  Consegui ler: {campos}."
-        return JSONResponse({"resposta": msg})
-
-    except Exception as e:
-        logger.exception("Erro ao processar mídia no chat local")
-        return JSONResponse({
-            "resposta": "Erro ao processar a imagem. Tente novamente. "
-        }, status_code=500)
