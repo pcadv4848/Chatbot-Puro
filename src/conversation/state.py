@@ -43,3 +43,4 @@ class SessionState:
     reminder_count: int = 0
     midia_inicial_enviada: bool = False
     sent_messages: list = field(default_factory=list)
+    pending_messages: list = field(default_factory=list)

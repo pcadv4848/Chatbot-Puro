@@ -38,6 +38,10 @@ router = APIRouter(prefix="/webhook", tags=["webhooks"])
 sessoes_ativas: dict[str, SessionState] = {}
 _sessoes_lock: asyncio.Lock = asyncio.Lock()
 
+# Debounce de mensagens: agrupa mensagens do cliente antes de processar
+_debounce_tasks: dict[str, asyncio.Task] = {}
+_MESSAGE_DEBOUNCE_SECONDS = 1.5
+
 # Número do próprio bot (descoberto da sessão OpenWA)
 _bot_phone_number: str | None = None
 
@@ -351,12 +355,25 @@ async def webhook_whatsapp(request: Request):
                     if msg_type == "text" and body:
                         admin_cmd = msg.get("admin_cmd", False)
                         ativar_silencioso = msg.get("_ativar_silencioso", False)
-                        wa_id = whatsapp_id
-                        await asyncio.wait_for(
-                            processar_mensagem_texto(wa_id, body, admin_cmd=admin_cmd,
-                                                     ativar_silencioso=ativar_silencioso),
-                            timeout=120,
-                        )
+                        if admin_cmd or is_admin:
+                            wa_id = whatsapp_id
+                            await asyncio.wait_for(
+                                processar_mensagem_texto(wa_id, body, admin_cmd=admin_cmd,
+                                                         ativar_silencioso=ativar_silencioso),
+                                timeout=120,
+                            )
+                        else:
+                            if not sessao:
+                                sessao = await _obter_ou_criar_sessao(whatsapp_id)
+                            sessao.pending_messages.append(body)
+                            if msg_id and msg_id not in sessao.processed_message_ids:
+                                sessao.processed_message_ids.append(msg_id)
+                            await salvar_sessao(sessao)
+                            if whatsapp_id not in _debounce_tasks or _debounce_tasks[whatsapp_id].done():
+                                _debounce_tasks[whatsapp_id] = asyncio.create_task(
+                                    _processar_com_debounce(whatsapp_id)
+                                )
+                            continue
                     elif msg_type in ("image", "document") and midia_id:
                         await asyncio.wait_for(
                             processar_mensagem_midia(whatsapp_id, midia_id),
@@ -507,6 +524,22 @@ async def _verificar_inatividade(sessao: SessionState, whatsapp_id: str) -> Opti
     except (ValueError, TypeError) as e:
         logger.warning("Erro ao verificar inatividade da sessão %s: %s", whatsapp_id, e)
     return None
+
+
+async def _processar_com_debounce(whatsapp_id: str):
+    await asyncio.sleep(_MESSAGE_DEBOUNCE_SECONDS)
+    key = _session_key(whatsapp_id)
+    sessao = sessoes_ativas.get(key)
+    if not sessao or not sessao.pending_messages:
+        return
+    combined = "\n\n".join(sessao.pending_messages)
+    sessao.pending_messages.clear()
+    await salvar_sessao(sessao)
+    await processar_mensagem_texto(whatsapp_id, combined)
+    if sessao.pending_messages:
+        _debounce_tasks[whatsapp_id] = asyncio.create_task(
+            _processar_com_debounce(whatsapp_id)
+        )
 
 
 async def processar_mensagem_texto(whatsapp_id: str, texto: str, admin_cmd: bool = False,
