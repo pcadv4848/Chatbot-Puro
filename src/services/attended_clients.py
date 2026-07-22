@@ -4,6 +4,7 @@ Cliente "atendido" = ja passou pelo chatbot e foi marcado como antigo.
 Estes clientes nao recebem resposta da IA (existing_client=True).
 """
 import logging
+import re
 
 from sqlalchemy import select
 
