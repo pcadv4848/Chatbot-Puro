@@ -659,6 +659,58 @@ async def verificar_contato_existente(whatsapp_id: str) -> bool | None:
         return None
 
 
+async def listar_chats() -> list[str]:
+    """Retorna lista de WhatsApp IDs (numéricos) de todos os chats da sessão.
+
+    Exclui o próprio número do bot e grupos (@g.us).
+    Usado no startup para marcar contatos existentes como atendidos.
+    """
+    try:
+        client = await get_client()
+        base = _get_base_url()
+        session_id = await _get_session_id_garantido()
+        headers = _get_headers()
+
+        resp = await client.get(
+            f"{base}/sessions/{session_id}/chats",
+            headers=headers,
+            timeout=30,
+        )
+        if resp.status_code != 200:
+            logger.warning("listar_chats: HTTP %d — %s", resp.status_code, resp.text[:200])
+            return []
+
+        chats = _safe_json(resp)
+        if not isinstance(chats, list):
+            return []
+
+        bot_jid = ""
+        try:
+            status = await obter_status_sessao()
+            me = status.get("me") or {}
+            bot_jid = (me.get("id") or "").split("@")[0]
+        except Exception:
+            pass
+
+        contatos: set[str] = set()
+        for chat in chats:
+            jid = (chat.get("id") or chat.get("jid") or "").strip()
+            if not jid:
+                continue
+            if "@g.us" in jid:
+                continue
+            raw = jid.split("@")[0]
+            if raw and raw != bot_jid:
+                contatos.add(raw)
+
+        resultado = list(contatos)
+        logger.info("listar_chats: %d contatos encontrados (bot_jid=%s)", len(resultado), bot_jid)
+        return resultado
+    except Exception as e:
+        logger.error("listar_chats falhou: %s", e, exc_info=True)
+        return []
+
+
 async def detectar_conexao_anterior() -> bool:
     """Verifica se a sessão OpenWA já estava conectada antes do startup.
 

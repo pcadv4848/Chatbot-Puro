@@ -11,6 +11,9 @@ from src.db.session import async_session
 
 logger = logging.getLogger(__name__)
 
+_JA_SINCRONIZOU = False
+"""Evita sincronizar contatos do WhatsApp mais de uma vez por execucao."""
+
 
 async def is_attended(whatsapp_id: str) -> bool:
     """Verifica se um cliente ja foi atendido."""
@@ -43,6 +46,38 @@ async def count_attended() -> int:
     async with async_session() as session:
         result = await session.execute(select(AttendedClient))
         return len(result.scalars().all())
+
+
+async def sincronizar_atendidos_do_whatsapp() -> int:
+    """Busca todos os contatos do WhatsApp Web e os marca como atendidos.
+
+    Isso garante que contatos pre-existentes (como 557133706350)
+    nao recebam respostas automaticas do bot nem follow-ups.
+
+    Retorna o numero de contatos recem-marcados.
+    """
+    global _JA_SINCRONIZOU
+    if _JA_SINCRONIZOU:
+        return 0
+    _JA_SINCRONIZOU = True
+
+    from src.services.whatsapp_openwa import listar_chats
+
+    contatos = await listar_chats()
+    if not contatos:
+        logger.info("sincronizar_atendidos: nenhum contato para sincronizar")
+        return 0
+
+    marcados = 0
+    for wa_id in contatos:
+        try:
+            await mark_attended(wa_id)
+            marcados += 1
+        except Exception as e:
+            logger.warning("sincronizar_atendidos: falha ao marcar %s: %s", wa_id, e)
+
+    logger.info("sincronizar_atendidos: %d contatos sincronizados como atendidos", marcados)
+    return marcados
 
 
 async def mark_unattended(whatsapp_id: str) -> None:

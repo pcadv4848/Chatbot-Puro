@@ -82,6 +82,9 @@ async def lifespan(app: FastAPI):
         ja_conectado = await detectar_conexao_anterior()
         if ja_conectado:
             logger.info("Sessão OpenWA já estava conectada — há clientes com histórico no WhatsApp")
+            from src.services.attended_clients import sincronizar_atendidos_do_whatsapp
+            total = await sincronizar_atendidos_do_whatsapp()
+            logger.info("Sincronização de contatos existentes concluída: %d marcados como atendidos", total)
         else:
             logger.info("Sessão OpenWA é nova — ainda não há contatos sincronizados")
 
