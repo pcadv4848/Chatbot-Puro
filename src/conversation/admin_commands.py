@@ -48,7 +48,7 @@ async def processar_admin_commands(texto: str, sessao: SessionState, admin_cmd: 
         if cache is not None and key in cache:
             del cache[key]
         sessao.__init__(whatsapp_id=sessao.whatsapp_id)
-        return "Conversa resetada! Vamos comecar do zero. Como voce se chama?"
+        return "Conversa resetada. Vamos comecar do zero. Como voce se chama?"
 
     # ── Demais comandos: apenas admin ──
     if not admin_id and not bot_phone:

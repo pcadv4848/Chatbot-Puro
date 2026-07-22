@@ -23,7 +23,8 @@ from src.agents.constants import (
     TRAFEGO_FINALIZAR as _TRAFEGO_FINALIZAR,
     SINAIS_DIFICULDADE as _SINAIS_DIFICULDADE,
     MENSAGEM_NAO_ENTENDI, MENSAGEM_ERRO_IA, MENSAGEM_QUOTA_EXCEDIDA,
-    MENSAGEM_FORA_ESCOPO, MENSAGEM_HUMANO, SILENT,
+    MENSAGEM_FORA_ESCOPO, MENSAGEM_HUMANO, MENSAGEM_HUMANO_DUVIDA, SILENT,
+    SINAIS_INCERTEZA as _SINAIS_INCERTEZA,
     PERGUNTAS_CLASSIFICACAO as _PERGUNTAS_CLASSIFICACAO,
     PALAVRAS_SIM as _PALAVRAS_SIM,
     PALAVRAS_NAO as _PALAVRAS_NAO,
@@ -131,6 +132,15 @@ def _pode_classificar(confianca: float, step: int) -> bool:
 
 async def _processar_humano(texto: str, sessao: SessionState) -> str:
     return SILENT
+
+
+def _tem_incerteza(texto: str) -> bool:
+    texto_lower = texto.lower().strip()
+    for sinal in _SINAIS_INCERTEZA:
+        if sinal in texto_lower:
+            logger.info("Incerteza detectada na resposta da IA: '%s'", sinal)
+            return True
+    return False
 
 
 # ═══════════════════════════════════════════════════════════
@@ -291,6 +301,16 @@ async def _processar_ia(texto: str, sessao: SessionState) -> str:
             return str(ultimo_conteudo) if ultimo_conteudo else MENSAGEM_ERRO_IA
 
     if hasattr(response, "content") and response.content:
+        if _tem_incerteza(response.content):
+            logger.info("IA demonstrou incerteza — transferindo para humano na sessão %s", sessao.whatsapp_id)
+            from src.services.attended_clients import mark_attended
+            await mark_attended(sessao.whatsapp_id)
+            sessao.human_attending = True
+            sessao.existing_client = True
+            sessao.status = SessionStatus.AGUARDANDO_ADVOGADO
+            sessao.step = 0
+            await salvar_sessao(sessao)
+            return MENSAGEM_HUMANO_DUVIDA
         return response.content
     return MENSAGEM_ERRO_IA
 
@@ -362,17 +382,15 @@ async def _processar_fallback(texto: str, sessao: SessionState) -> str:
         sessao.esfera = resultado.get("esfera", "adm")
         sessao.status = SessionStatus.AGUARDANDO_ADVOGADO
         await salvar_sessao(sessao)
-        return (
-            "Vamos dar continuidade ao atendimento."
-        )
+        return MENSAGEM_HUMANO
 
     elif sessao.status == SessionStatus.TRAFEGO_PAGO:
         return await _processar_trafego_pago(texto, sessao)
 
     elif sessao.status == SessionStatus.PAUSADO:
         return (
-            "Ola! Seu atendimento estava pausado. "
-            "Se quiser retomar, e so me dizer o que precisa!"
+            "Ola, seu atendimento estava pausado. "
+            "Se quiser retomar, e so me dizer o que precisa."
         )
 
     return MENSAGEM_NAO_ENTENDI
@@ -408,10 +426,9 @@ async def _processar_classificando(texto: str, sessao: SessionState) -> str:
         sessao.status = SessionStatus.AGUARDANDO_ADVOGADO
         await salvar_sessao(sessao)
         return (
-            "Vamos dar continuidade ao atendimento. "
-            "Para agilizar o preparo dos seus documentos, "
-            "envie fotos do seu RG e CPF por aqui mesmo. "
-            "Assim que tiver os dados, começamos a gerar tudo!"
+            "Perfeito, ja entendi seu caso. Para dar inicio ao seu atendimento, "
+            "me envie fotos do seu RG e CPF por aqui mesmo. "
+            "Assim que receber, ja comeco a preparar tudo."
         )
 
     if sessao.step > _MAX_TENTATIVAS_CLASSIFICACAO:
@@ -422,9 +439,7 @@ async def _processar_classificando(texto: str, sessao: SessionState) -> str:
         sessao.status = SessionStatus.AGUARDANDO_ADVOGADO
         sessao.motivo_pausa = "nao foi possivel identificar o beneficio"
         await salvar_sessao(sessao)
-        return (
-            "Vamos dar continuidade ao atendimento."
-        )
+        return MENSAGEM_HUMANO
 
     idx_pergunta = min(sessao.step - 1, len(_PERGUNTAS_CLASSIFICACAO) - 1)
     pergunta = _PERGUNTAS_CLASSIFICACAO[idx_pergunta]
@@ -432,7 +447,7 @@ async def _processar_classificando(texto: str, sessao: SessionState) -> str:
     if nome:
         pergunta = f"{nome}, {pergunta}"
     if sessao.step == 1:
-        return f"Ola! {pergunta}"
+        return f"Ola, {pergunta}"
     return pergunta
 
 
@@ -467,8 +482,7 @@ async def _processar_confirmando(texto: str, sessao: SessionState) -> str:
         sessao.status = SessionStatus.COLETANDO_DADOS
         sessao.step = 0
         msg = (
-            "Vamos dar continuidade ao atendimento."
-            " Vou precisar de alguns dados seus:"
+            "Perfeito, so mais alguns dados para finalizar:"
         )
         primeiro = _perguntar_proximo_campo(sessao)
         await salvar_sessao(sessao)
@@ -486,14 +500,14 @@ async def _processar_confirmando(texto: str, sessao: SessionState) -> str:
             return MENSAGEM_FORA_ESCOPO
         await salvar_sessao(sessao)
         return (
-            "Entendi! Vou tentar de novo."
-            " Me conte o que você precisa. Por exemplo:"
-            " auxílio-doença, aposentadoria, pensão ou revisão de benefício."
+            "Entendi, deixa eu tentar de outra forma."
+            " Me conte o que voce precisa: auxilio-doenca,"
+            " aposentadoria, pensao ou revisao de beneficio."
         )
 
     return (
-        "As informações que você forneceu estão corretas? "
-        "Responda **sim** ou **nao** para eu continuar."
+        "As informacoes que voce forneceu estao corretas?"
+        " Pode me confirmar para eu dar prosseguimento."
     )
 
 
@@ -706,4 +720,4 @@ async def _processar_gerando(sessao: SessionState, force: bool = False) -> str:
     await mark_attended(sessao.whatsapp_id)
     await salvar_sessao(sessao)
 
-    return "Seu caso foi registrado com sucesso!"
+    return "Seu caso foi registrado com sucesso."

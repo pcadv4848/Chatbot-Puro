@@ -21,6 +21,7 @@ from src.conversation.storage import (
     STORAGE_DIR,
 )
 from src.agents.supervisor import processar, SILENT
+from src.agents.text_utils import eh_mensagem_duplicada as _eh_mensagem_duplicada
 from src.config import settings
 from src.engine.rate_limit import limiter
 from src.services.transcricao import transcrever_audio_async, disponivel as whisper_disponivel
@@ -131,22 +132,18 @@ def _parse_openwa_payload(payload: dict) -> list[dict]:
                 _bot_phone_number = sender
                 logger.info("Número do bot descoberto via message.sent: %s", _bot_phone_number)
 
-            admin_id = settings.admin_whatsapp or ""
-            if admin_id and mesmo_telefone(sender, admin_id):
-                if any(body.startswith(cmd) for cmd in _ADMIN_INPUTS):
+            if _bot_phone_number and mesmo_telefone(sender, _bot_phone_number):
+                admin_id = settings.admin_whatsapp or ""
+                if admin_id and mesmo_telefone(sender, admin_id) and any(body.startswith(cmd) for cmd in _ADMIN_INPUTS):
                     return [{"id": data.get("id", ""), "from": target,
                              "type": "text", "body": body, "admin_cmd": True}]
-                return [{"id": data.get("id", ""), "from": target,
-                         "type": "text", "body": body, "admin_cmd": True,
-                         "_ativar_silencioso": True}]
-
-            if _bot_phone_number and mesmo_telefone(sender, _bot_phone_number):
-                now = time.time()
-                last_sent = _ultimos_envios.get(target)
-                if last_sent is None or (now - last_sent) > 10:
-                    logger.info("Humano detectado enviando do número do bot para %s — marcando como atendido", target)
+                target_key = target.split("@")[0] if "@" in target else target
+                last_bot_send = _ultimos_envios.get(target_key, 0)
+                if time.time() - last_bot_send > 10.0:
+                    logger.info("Humano detectado respondendo para %s via message.sent", target)
                     return [{"id": data.get("id", ""), "from": target,
-                             "type": "text", "body": body, "_ativar_silencioso": True}]
+                             "type": "text", "body": body, "_human_reply": True}]
+                return []
         return []
     if event not in ("message.received", "messages.upsert"):
         return []
@@ -277,6 +274,20 @@ async def webhook_whatsapp(request: Request):
                         if hasattr(sessao, "processed_message_ids") and msg_id in sessao.processed_message_ids:
                             continue
 
+                    if msg.get("_human_reply"):
+                        if not sessao:
+                            sessao = await _obter_ou_criar_sessao(whatsapp_id)
+                        sessao.human_attending = True
+                        sessao.existing_client = True
+                        sessao.status = SessionStatus.AGUARDANDO_ADVOGADO
+                        sessao.conversa.append({"role": "user", "content": f"[humano respondeu: {body[:150]}]"})
+                        await salvar_sessao(sessao)
+                        if msg_id and msg_id not in sessao.processed_message_ids:
+                            sessao.processed_message_ids.append(msg_id)
+                        track_entry["status"] = f"human_detected_{whatsapp_id}"
+                        logger.info("Resposta humana detectada — sessão %s marcada como human_attending", whatsapp_id)
+                        continue
+
                     if sessao and not sessao.existing_client:
                         from src.services.attended_clients import is_attended
                         if await is_attended(whatsapp_id):
@@ -382,7 +393,7 @@ async def webhook_whatsapp(request: Request):
                         else:
                             await enviar_mensagem(
                                 whatsapp_id,
-                                f"Recebi seu {msg_type}! Infelizmente ainda não consigo "
+                                f"Recebi seu {msg_type}. Infelizmente ainda não consigo "
                                 f"processar {msg_type}. Pode me enviar por texto?"
                             )
 
@@ -462,6 +473,16 @@ async def _obter_ou_criar_sessao(whatsapp_id: str) -> SessionState:
 
 
 async def _salvar_e_enviar(sessao: SessionState, whatsapp_id: str, resposta: str):
+    if _eh_mensagem_duplicada(resposta, sessao.sent_messages):
+        logger.info("Mensagem duplicada detectada para %s — pulando envio: '%s'", whatsapp_id, resposta[:80])
+        sessao.sent_messages.append(resposta)
+        if len(sessao.sent_messages) > 50:
+            sessao.sent_messages = sessao.sent_messages[-50:]
+        await salvar_sessao(sessao)
+        return
+    sessao.sent_messages.append(resposta)
+    if len(sessao.sent_messages) > 50:
+        sessao.sent_messages = sessao.sent_messages[-50:]
     await enviar_mensagem(whatsapp_id, resposta)
     await salvar_sessao(sessao)
 
@@ -477,9 +498,9 @@ async def _verificar_inatividade(sessao: SessionState, whatsapp_id: str) -> Opti
             sessao.motivo_pausa = "inatividade"
             await salvar_sessao(sessao)
             return (
-                "Olá!  Seu atendimento estava pausado por inatividade.\n\n"
-                "Se quiser retomar de onde parou, é só me dizer! "
-                "Ou se mudou de ideia, pode me avisar também."
+                "Ola, seu atendimento estava pausado por inatividade.\n\n"
+                "Se quiser retomar de onde parou, e so me dizer."
+                " Ou se mudou de ideia, pode me avisar tambem."
             )
     except (ValueError, TypeError) as e:
         logger.warning("Erro ao verificar inatividade da sessão %s: %s", whatsapp_id, e)
@@ -531,8 +552,8 @@ async def processar_mensagem_texto(whatsapp_id: str, texto: str, admin_cmd: bool
         sessao.status = SessionStatus.PAUSADO
         sessao.motivo_pausa = "abandono voluntário"
         resposta = (
-            "Sem problemas!  Seu cadastro foi salvo. "
-            "Quando quiser retomar, é só me chamar aqui."
+            "Sem problemas. Seu cadastro foi salvo. "
+            "Quando quiser retomar, e so me chamar aqui."
         )
         sessao.conversa.append({"role": "user", "content": _user_content})
         sessao.conversa.append({"role": "assistant", "content": resposta})
@@ -544,9 +565,9 @@ async def processar_mensagem_texto(whatsapp_id: str, texto: str, admin_cmd: bool
         sessao.motivo_pausa = None
         nome = sessao.dados_cliente.get("nome")
         if nome:
-            resume_msg = f"Bem-vindo de volta, {nome}!  Vamos continuar de onde paramos?"
+            resume_msg = f"Bem-vindo de volta, {nome}. Vamos continuar de onde paramos?"
         else:
-            resume_msg = "Bem-vindo de volta!  Vamos continuar de onde paramos?"
+            resume_msg = "Bem-vindo de volta. Vamos continuar de onde paramos?"
         sessao.conversa.append({"role": "assistant", "content": resume_msg})
         await _salvar_e_enviar(sessao, whatsapp_id, resume_msg)
         return
@@ -580,7 +601,7 @@ async def processar_mensagem_midia(whatsapp_id: str, midia_id: str):
         sessao.status = SessionStatus.CLASSIFICANDO if not sessao.tipo_beneficio else SessionStatus.COLETANDO_DADOS
         sessao.motivo_pausa = None
         nome = sessao.dados_cliente.get("nome")
-        resume_msg = f"Bem-vindo de volta, {nome}!" if nome else "Bem-vindo de volta!"
+        resume_msg = f"Bem-vindo de volta, {nome}." if nome else "Bem-vindo de volta."
         sessao.conversa.append({"role": "user", "content": f"[midia: {midia_id}]"})
         sessao.conversa.append({"role": "assistant", "content": resume_msg})
         await _salvar_e_enviar(sessao, whatsapp_id, resume_msg)

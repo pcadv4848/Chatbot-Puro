@@ -41,6 +41,7 @@ def _serializar_json(sessao: SessionState) -> dict:
         "existing_client": sessao.existing_client,
         "reminder_count": sessao.reminder_count,
         "midia_inicial_enviada": sessao.midia_inicial_enviada,
+        "sent_messages": sessao.sent_messages[-20:] if sessao.sent_messages else [],
     }
     return dados
 
@@ -81,6 +82,7 @@ def _desserializar_json(dados: dict) -> SessionState:
         existing_client=dados.get("existing_client", False),
         reminder_count=dados.get("reminder_count", 0),
         midia_inicial_enviada=dados.get("midia_inicial_enviada", False),
+        sent_messages=dados.get("sent_messages", []),
     )
 
 

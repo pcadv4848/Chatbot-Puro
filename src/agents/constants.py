@@ -130,25 +130,25 @@ BENEFICIO_NOME: dict[str, str] = {
 }
 
 # ── Constantes do fluxo de classificação ──
-MAX_TENTATIVAS_CLASSIFICACAO = 30
-MIN_STEPS_EARLY_CLASSIFY = 6
-MIN_STEPS_PARA_CONCLUIR = 14
+MAX_TENTATIVAS_CLASSIFICACAO = 15
+MIN_STEPS_EARLY_CLASSIFY = 3
+MIN_STEPS_PARA_CONCLUIR = 7
 EARLY_CLASSIFY_CONFIDENCE = 0.7
 
 # ── Mensagens do fluxo de tráfego pago ──
 TRAFEGO_SAUDACAO = [
     "Aqui e da Advocacia Penido Castro. Como voce se chama?",
-    "Advocacia Penido Castro. Qual o seu nome?",
+    "Penido Castro. Qual o seu nome?",
 ]
 
 TRAFEGO_HISTORIA = [
-    "Prazer, {nome}. Pode me explicar qual e o seu caso?",
-    "{nome}, conte resumidamente o que esta acontecendo com voce.",
+    "Prazer, {nome}. Me conta um pouco sobre o que esta acontecendo.",
+    "{nome}, me explique resumidamente qual e a situacao.",
 ]
 
 TRAFEGO_FINALIZAR = [
-    "Obrigado, {nome}! Ja deu para entender. Vamos dar continuidade ao atendimento.",
-    "Entendi, {nome}! Vamos dar continuidade ao atendimento.",
+    "Perfeito, {nome}. Ja entendi seu caso. Vou registrar e dar inicio ao seu atendimento.",
+    "Entendi, {nome}. Deixa que eu cuido disso agora mesmo.",
 ]
 
 # ── Sinais de dificuldade ──
@@ -177,36 +177,61 @@ MENSAGEM_ERRO_IA = (
 )
 
 MENSAGEM_QUOTA_EXCEDIDA = (
-    "Excedemos o limite de uso da IA no momento."
+    "Excedemos o limite de uso no momento."
     " Aguarde alguns instantes e tente novamente."
 )
 
 MENSAGEM_FORA_ESCOPO = (
-    "Vamos dar continuidade ao atendimento."
+    "Certo. Vou passar seu caso para um advogado da nossa equipe"
+    " analisar pessoalmente e dar continuidade."
 )
 
 MENSAGEM_HUMANO = (
-    "Vamos dar continuidade ao atendimento por aqui mesmo."
+    "Perfeito. Seu caso foi registrado com sucesso."
+    " Um advogado da nossa equipe vai preparar seus documentos."
+)
+
+MENSAGEM_HUMANO_DUVIDA = (
+    "Essa é uma boa pergunta. Prefiro que um advogado da nossa equipe"
+    " analise seu caso pessoalmente para te passar a informação correta."
 )
 
 SILENT = "__SILENT__"
 """Sentinel: processar retorna SILENT quando o bot deve processar sem responder."""
 
-# ── Perguntas progressivas para classificação ──
+
+# ── Sinais de que a IA está em dúvida ou não tem certeza ──
+SINAIS_INCERTEZA = frozenset({
+    "não tenho certeza", "nao tenho certeza",
+    "não sei", "nao sei",
+    "não posso afirmar", "nao posso afirmar",
+    "não posso confirmar", "nao posso confirmar",
+    "não tenho essa informação", "nao tenho essa informacao",
+    "não tenho como saber", "nao tenho como saber",
+    "talvez", "pode ser que",
+    "não consigo responder", "nao consigo responder",
+    "não posso responder", "nao posso responder",
+    "sugiro consultar", "consulte um",
+    "é importante consultar",
+    "aconselho consultar", "aconselho buscar",
+    "recomendo consultar", "recomendo procurar",
+    "não é possível afirmar", "nao e possivel afirmar",
+    "não é possível confirmar", "nao e possivel confirmar",
+    "isso requer", "seria necessário",
+    "depende de", "depende do",
+    "não posso dar essa informação", "nao posso dar essa informacao",
+    "não posso fornecer", "nao posso fornecer",
+    "busque orientação", "busque orientacao",
+    "procure um advogado", "procure um profissional",
+    "não tenho acesso", "nao tenho acesso",
+})
+
+# ── Perguntas progressivas para classificação (poucas para fluxo rápido) ──
 PERGUNTAS_CLASSIFICACAO = [
-    "me conte um pouco da sua situacao e sobre suas duvidas?",
-    "e sobre o trabalho, como esta essa questao?",
-    "ha quanto tempo esta nessa situacao?",
+    "me conte um pouco sobre o que esta acontecendo.",
+    "ha quanto tempo voce esta nessa situacao?",
     "ja contribuiu para o INSS alguma vez?",
-    "posso saber sua idade?",
-    "seu trabalho e mais na cidade ou no campo?",
     "tem alguma questao de saude envolvida?",
-    "ja recebeu ou recebe algum beneficio do INSS?",
-    "faz algum tratamento ou acompanhamento medico?",
-    "teve algum falecimento na familia recentemente?",
-    "sabe me dizer como eram suas contribuicoes?",
-    "trabalhou em algum ambiente com produtos quimicos ou insalubre?",
-    "sempre trabalhou com carteira assinada ou nao?",
     "gostaria de acrescentar mais alguma coisa?",
 ]
 

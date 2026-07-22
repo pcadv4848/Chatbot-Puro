@@ -162,6 +162,11 @@ async def _enviar_mensagem_uma_vez(whatsapp_id: str, texto: str) -> dict:
     _ultimo_erro_envio = None  # limpa erro anterior no sucesso
     key = whatsapp_id.split("@")[0] if "@" in whatsapp_id else whatsapp_id
     _ultimos_envios[key] = time.time()
+    if len(_ultimos_envios) > 1000:
+        agora = time.time()
+        expirados = [k for k, v in _ultimos_envios.items() if agora - v > 3600]
+        for k in expirados:
+            del _ultimos_envios[k]
     return _safe_json(resp)
 
 

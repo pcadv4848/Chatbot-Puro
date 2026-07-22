@@ -42,3 +42,4 @@ class SessionState:
     existing_client: bool = False
     reminder_count: int = 0
     midia_inicial_enviada: bool = False
+    sent_messages: list = field(default_factory=list)

@@ -2,7 +2,7 @@ import asyncio
 import logging
 import uuid
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, Form
 from fastapi.responses import HTMLResponse, JSONResponse
 
 from src.agents.supervisor import processar, SILENT
@@ -198,7 +198,7 @@ async def enviar_mensagem(request: Request, session_id: str = Form(...), texto: 
         sessao.status = SessionStatus.PAUSADO
         sessao.motivo_pausa = "abandono voluntário"
         resposta = (
-            "Sem problemas!  Seu cadastro foi salvo. "
+            "Sem problemas. Seu cadastro foi salvo. "
             "Quando quiser retomar, é só me chamar aqui."
         )
         return JSONResponse({"resposta": resposta})
@@ -206,7 +206,7 @@ async def enviar_mensagem(request: Request, session_id: str = Form(...), texto: 
     if _detectar(texto, PALAVRAS_NOVO_ATENDIMENTO):
         _chat_sessions[session_id] = SessionState(whatsapp_id=f"chat_{session_id}")
         resposta = (
-            "Pronto!  Vamos começar do zero. "
+            "Pronto. Vamos comecar do zero. "
             "Me conte o que você precisa:"
         )
         return JSONResponse({"resposta": resposta})
@@ -220,9 +220,9 @@ async def enviar_mensagem(request: Request, session_id: str = Form(...), texto: 
         sessao.motivo_pausa = None
         nome = sessao.dados_cliente.get("nome")
         if nome:
-            resposta = f"Bem-vindo de volta, {nome}!  Vamos continuar de onde paramos?"
+            resposta = f"Bem-vindo de volta, {nome}. Vamos continuar de onde paramos?"
         else:
-            resposta = "Bem-vindo de volta!  Vamos continuar de onde paramos?"
+            resposta = "Bem-vindo de volta. Vamos continuar de onde paramos?"
         return JSONResponse({"resposta": resposta})
 
     resposta = await processar(texto, sessao)

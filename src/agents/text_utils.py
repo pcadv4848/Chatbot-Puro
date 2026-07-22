@@ -146,3 +146,54 @@ def verificar_nao(texto: str) -> bool:
 def sanitizar_id(id_: str) -> str:
     """Remove caracteres que poderiam causar path traversal."""
     return re.sub(r"[^\w\s\-]", "_", id_)
+
+
+def normalizar_para_dedup(texto: str) -> str:
+    """Normaliza texto para comparação de duplicatas (lowercase, sem pontuação, sem espaços extras)."""
+    t = texto.lower().strip()
+    t = remover_acentos(t)
+    t = re.sub(r"[^\w\s]", "", t)
+    t = re.sub(r"\s+", " ", t).strip()
+    return t
+
+
+def _palavras_comuns(a: str, b: str) -> float:
+    """Retorna fração de palavras comuns entre duas strings normalizadas."""
+    palavras_a = set(a.split())
+    palavras_b = set(b.split())
+    if not palavras_a or not palavras_b:
+        return 0.0
+    intersecao = palavras_a & palavras_b
+    return len(intersecao) / max(len(palavras_a), len(palavras_b))
+
+
+def eh_mensagem_duplicada(nova_msg: str, historico: list[str], limiar: float = 0.7) -> bool:
+    """Verifica se nova_msg é duplicata de alguma mensagem no histórico.
+
+    Usa correspondência exata + substring + palavras em comum.
+    """
+    if not historico:
+        return False
+
+    nova_norm = normalizar_para_dedup(nova_msg)
+    if not nova_norm:
+        return False
+
+    for antiga in historico:
+        antiga_norm = normalizar_para_dedup(antiga)
+        if not antiga_norm:
+            continue
+
+        if nova_norm == antiga_norm:
+            return True
+
+        if len(nova_norm) >= 5 and nova_norm in antiga_norm:
+            return True
+
+        if len(antiga_norm) >= 5 and antiga_norm in nova_norm:
+            return True
+
+        if _palavras_comuns(nova_norm, antiga_norm) >= limiar:
+            return True
+
+    return False
