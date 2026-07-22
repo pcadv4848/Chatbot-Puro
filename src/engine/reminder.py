@@ -63,6 +63,8 @@ async def _verificar_lembrete(sessao: SessionState) -> bool:
 
     try:
         ultima = datetime.fromisoformat(sessao.ultima_atividade)
+        if ultima.tzinfo is None:
+            ultima = ultima.replace(tzinfo=timezone.utc)
     except (ValueError, TypeError):
         return False
 

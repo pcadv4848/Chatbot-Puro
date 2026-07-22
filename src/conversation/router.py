@@ -490,6 +490,8 @@ async def _salvar_e_enviar(sessao: SessionState, whatsapp_id: str, resposta: str
 async def _verificar_inatividade(sessao: SessionState, whatsapp_id: str) -> Optional[str]:
     try:
         ultima = datetime.fromisoformat(sessao.ultima_atividade)
+        if ultima.tzinfo is None:
+            ultima = ultima.replace(tzinfo=timezone.utc)
         agora = datetime.now(timezone.utc)
         diff_minutos = (agora - ultima).total_seconds() / 60
 
