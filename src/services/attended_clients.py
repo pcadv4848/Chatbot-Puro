@@ -20,6 +20,9 @@ async def is_attended(whatsapp_id: str) -> bool:
     from src.db.models import AttendedClient
     from src.conversation.jid_utils import normalizar_br
     candidatos = {whatsapp_id, normalizar_br(whatsapp_id)}
+    dig = re.sub(r"\D", "", whatsapp_id)
+    if len(dig) == 12 and dig.startswith("55"):
+        candidatos.add(dig[:4] + "9" + dig[4:])
     async with async_session() as session:
         for wa in candidatos:
             result = await session.execute(
