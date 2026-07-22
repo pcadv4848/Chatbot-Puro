@@ -327,7 +327,7 @@ async def _atualizar_sessao_por_tool(nome_tool: str, resultado: str, sessao: Ses
             sessao.tipo_beneficio = dados.get("tipo", sessao.tipo_beneficio)
             sessao.esfera = dados.get("esfera", sessao.esfera)
             if sessao.status == SessionStatus.CLASSIFICANDO:
-                sessao.status = SessionStatus.AGUARDANDO_ADVOGADO
+                sessao.status = SessionStatus.CONFIRMANDO
 
     elif nome_tool == "validar_dados_cliente":
         pass
@@ -351,15 +351,11 @@ async def _processar_fallback(texto: str, sessao: SessionState) -> str:
         await salvar_sessao(sessao)
         return SILENT
 
-    elif sessao.status in (
-        SessionStatus.CONFIRMANDO,
-        SessionStatus.COLETANDO_DADOS,
-    ):
-        sessao.human_attending = True
-        sessao.status = SessionStatus.AGUARDANDO_ADVOGADO
-        from src.conversation.storage import salvar_sessao
-        await salvar_sessao(sessao)
-        return MENSAGEM_HUMANO
+    elif sessao.status == SessionStatus.CONFIRMANDO:
+        return await _processar_confirmando(texto, sessao)
+
+    elif sessao.status == SessionStatus.COLETANDO_DADOS:
+        return await _processar_coleta_dados(texto, sessao)
 
     elif sessao.status == SessionStatus.AGUARDANDO_DOC:
         return await _processar_aguardando_doc(sessao)
@@ -419,16 +415,17 @@ async def _processar_classificando(texto: str, sessao: SessionState) -> str:
         sessao.tipo_beneficio = resultado["tipo"]
         sessao.esfera = resultado["esfera"]
         sessao.step = 0
-        from src.services.attended_clients import mark_attended
-        await mark_attended(sessao.whatsapp_id)
-        sessao.human_attending = True
-        sessao.existing_client = True
-        sessao.status = SessionStatus.AGUARDANDO_ADVOGADO
+        sessao.status = SessionStatus.CONFIRMANDO
         await salvar_sessao(sessao)
+        nome = sessao.dados_cliente.get("nome", "")
+        if nome:
+            return (
+                f"{nome}, ja entendi seu caso. "
+                "As informacoes que voce me deu estao corretas?"
+            )
         return (
-            "Perfeito, ja entendi seu caso. Para dar inicio ao seu atendimento, "
-            "me envie fotos do seu RG e CPF por aqui mesmo. "
-            "Assim que receber, ja comeco a preparar tudo."
+            "Ja entendi seu caso. "
+            "As informacoes que voce me deu estao corretas?"
         )
 
     if sessao.step > _MAX_TENTATIVAS_CLASSIFICACAO:

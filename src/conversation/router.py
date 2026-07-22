@@ -137,8 +137,7 @@ def _parse_openwa_payload(payload: dict) -> list[dict]:
                 logger.info("Número do bot descoberto via message.sent: %s", _bot_phone_number)
 
             if _bot_phone_number and mesmo_telefone(sender, _bot_phone_number):
-                admin_id = settings.admin_whatsapp or ""
-                if admin_id and mesmo_telefone(sender, admin_id) and any(body.startswith(cmd) for cmd in _ADMIN_INPUTS):
+                if any(body.startswith(cmd) for cmd in _ADMIN_INPUTS):
                     return [{"id": data.get("id", ""), "from": target,
                              "type": "text", "body": body, "admin_cmd": True}]
                 target_key = target.split("@")[0] if "@" in target else target
@@ -577,11 +576,15 @@ async def processar_mensagem_texto(whatsapp_id: str, texto: str, admin_cmd: bool
     if sessao.reminder_count > 0:
         sessao.reminder_count = 0
 
-    msg_inatividade = await _verificar_inatividade(sessao, whatsapp_id)
-    if msg_inatividade:
-        sessao.conversa.append({"role": "assistant", "content": msg_inatividade})
-        await _salvar_e_enviar(sessao, whatsapp_id, msg_inatividade)
-        return
+    if is_admin and sessao.existing_client:
+        sessao.existing_client = False
+
+    if not is_admin:
+        msg_inatividade = await _verificar_inatividade(sessao, whatsapp_id)
+        if msg_inatividade:
+            sessao.conversa.append({"role": "assistant", "content": msg_inatividade})
+            await _salvar_e_enviar(sessao, whatsapp_id, msg_inatividade)
+            return
 
     if _detectar_abandono(texto):
         sessao.status = SessionStatus.PAUSADO
@@ -606,9 +609,6 @@ async def processar_mensagem_texto(whatsapp_id: str, texto: str, admin_cmd: bool
         sessao.conversa.append({"role": "assistant", "content": resume_msg})
         await _salvar_e_enviar(sessao, whatsapp_id, resume_msg)
         return
-
-    if is_admin and sessao.existing_client:
-        sessao.existing_client = False
 
     sessao.conversa.append({"role": "user", "content": _user_content})
 
