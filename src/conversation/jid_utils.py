@@ -33,15 +33,17 @@ def normalizar_br(numero: str) -> str:
 
 def mesmo_telefone(a: str, b: str) -> bool:
     """Compara dois números de telefone ignorando código de país (55) e formatação.
-    
-    Extrai apenas dígitos de ambos e verifica se o menor é sufixo do maior.
-    Também remove o 9 móvel extra brasileiro para normalização.
-    Ex: mesmo_telefone("75999903859", "5575999903859") → True
+
+    Normaliza ambos (remove 9 móvel extra BR) e depois remove o prefixo 55
+    de cada um para comparação exata do DDD + número.
+    Ex: mesmo_telefone("7599903859", "557599903859") → True
     """
     dig_a = normalizar_br(a)
     dig_b = normalizar_br(b)
     if not dig_a or not dig_b:
         return False
-    if len(dig_a) >= len(dig_b):
-        return dig_a.endswith(dig_b)
-    return dig_b.endswith(dig_a)
+    if dig_a.startswith("55") and len(dig_a) > 2:
+        dig_a = dig_a[2:]
+    if dig_b.startswith("55") and len(dig_b) > 2:
+        dig_b = dig_b[2:]
+    return dig_a == dig_b

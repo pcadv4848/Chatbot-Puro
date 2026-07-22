@@ -122,6 +122,16 @@ async def _verificar_todas_sessoes(sessoes_ativas: dict) -> int:
         if await _verificar_lembrete(sessao):
             enviados += 1
 
+    from src.conversation.storage import carregar_todas_sessoes
+    todas = await carregar_todas_sessoes()
+    for key, sessao in todas.items():
+        if key in sessoes_ativas:
+            continue
+        if sessao.reminder_count >= settings.reminder_max_count:
+            continue
+        if await _verificar_lembrete(sessao):
+            enviados += 1
+
     return enviados
 
 

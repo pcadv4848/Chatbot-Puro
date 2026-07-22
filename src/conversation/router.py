@@ -528,7 +528,8 @@ async def _verificar_inatividade(sessao: SessionState, whatsapp_id: str) -> Opti
 async def _processar_com_debounce(whatsapp_id: str):
     await asyncio.sleep(_MESSAGE_DEBOUNCE_SECONDS)
     key = _session_key(whatsapp_id)
-    sessao = sessoes_ativas.get(key)
+    async with _sessoes_lock:
+        sessao = sessoes_ativas.get(key)
     if not sessao or not sessao.pending_messages:
         return
     combined = "\n\n".join(sessao.pending_messages)
