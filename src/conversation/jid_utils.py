@@ -19,14 +19,27 @@ def raw_number(jid: str) -> str:
     return jid.split("@")[0] if "@" in jid else jid
 
 
+def normalizar_br(numero: str) -> str:
+    """Remove o digito 9 movel extra de numeros brasileiros (55 + DDD + 9).
+
+    Ex: normalizar_br('5575999903859') -> '557599903859'
+        normalizar_br('557599903859') -> '557599903859'
+    """
+    dig = re.sub(r"\D", "", numero)
+    if len(dig) == 13 and dig.startswith("55"):
+        dig = dig[:4] + dig[5:]
+    return dig
+
+
 def mesmo_telefone(a: str, b: str) -> bool:
     """Compara dois números de telefone ignorando código de país (55) e formatação.
     
     Extrai apenas dígitos de ambos e verifica se o menor é sufixo do maior.
+    Também remove o 9 móvel extra brasileiro para normalização.
     Ex: mesmo_telefone("75999903859", "5575999903859") → True
     """
-    dig_a = re.sub(r"\D", "", a)
-    dig_b = re.sub(r"\D", "", b)
+    dig_a = normalizar_br(a)
+    dig_b = normalizar_br(b)
     if not dig_a or not dig_b:
         return False
     if len(dig_a) >= len(dig_b):

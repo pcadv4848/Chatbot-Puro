@@ -18,26 +18,33 @@ _JA_SINCRONIZOU = False
 async def is_attended(whatsapp_id: str) -> bool:
     """Verifica se um cliente ja foi atendido."""
     from src.db.models import AttendedClient
+    from src.conversation.jid_utils import normalizar_br
+    candidatos = {whatsapp_id, normalizar_br(whatsapp_id)}
     async with async_session() as session:
-        result = await session.execute(
-            select(AttendedClient).where(AttendedClient.whatsapp_id == whatsapp_id)
-        )
-        return result.scalar_one_or_none() is not None
+        for wa in candidatos:
+            result = await session.execute(
+                select(AttendedClient).where(AttendedClient.whatsapp_id == wa)
+            )
+            if result.scalar_one_or_none():
+                return True
+    return False
 
 
 async def mark_attended(whatsapp_id: str) -> None:
     """Marca um cliente como atendido (adiciona na tabela)."""
     from src.db.models import AttendedClient
+    from src.conversation.jid_utils import normalizar_br
+    wa_normalizado = normalizar_br(whatsapp_id)
     async with async_session() as session:
         result = await session.execute(
-            select(AttendedClient).where(AttendedClient.whatsapp_id == whatsapp_id)
+            select(AttendedClient).where(AttendedClient.whatsapp_id == wa_normalizado)
         )
         if result.scalar_one_or_none():
             return
-        entry = AttendedClient(whatsapp_id=whatsapp_id)
+        entry = AttendedClient(whatsapp_id=wa_normalizado)
         session.add(entry)
         await session.commit()
-        logger.info("Cliente %s marcado como atendido", whatsapp_id)
+        logger.info("Cliente %s marcado como atendido (normalizado=%s)", whatsapp_id, wa_normalizado)
 
 
 async def count_attended() -> int:
@@ -68,10 +75,11 @@ async def sincronizar_atendidos_do_whatsapp() -> int:
         logger.info("sincronizar_atendidos: nenhum contato para sincronizar")
         return 0
 
+    from src.conversation.jid_utils import normalizar_br
     marcados = 0
     for wa_id in contatos:
         try:
-            await mark_attended(wa_id)
+            await mark_attended(normalizar_br(wa_id))
             marcados += 1
         except Exception as e:
             logger.warning("sincronizar_atendidos: falha ao marcar %s: %s", wa_id, e)
@@ -83,12 +91,14 @@ async def sincronizar_atendidos_do_whatsapp() -> int:
 async def mark_unattended(whatsapp_id: str) -> None:
     """Remove um cliente da lista de atendidos."""
     from src.db.models import AttendedClient
+    from src.conversation.jid_utils import normalizar_br
+    wa_normalizado = normalizar_br(whatsapp_id)
     async with async_session() as session:
         result = await session.execute(
-            select(AttendedClient).where(AttendedClient.whatsapp_id == whatsapp_id)
+            select(AttendedClient).where(AttendedClient.whatsapp_id == wa_normalizado)
         )
         entry = result.scalar_one_or_none()
         if entry:
             await session.delete(entry)
             await session.commit()
-            logger.info("Cliente %s removido de atendidos", whatsapp_id)
+            logger.info("Cliente %s removido de atendidos (normalizado=%s)", whatsapp_id, wa_normalizado)
