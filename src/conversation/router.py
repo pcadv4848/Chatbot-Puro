@@ -599,7 +599,7 @@ async def processar_mensagem_texto(whatsapp_id: str, texto: str, admin_cmd: bool
         return
 
     if sessao.status == SessionStatus.PAUSADO:
-        sessao.status = SessionStatus.CLASSIFICANDO if not sessao.tipo_beneficio else SessionStatus.COLETANDO_DADOS
+        sessao.status = SessionStatus.CLASSIFICANDO if not sessao.tipo_beneficio else SessionStatus.AGUARDANDO_ADVOGADO
         sessao.motivo_pausa = None
         nome = sessao.dados_cliente.get("nome")
         if nome:
@@ -633,7 +633,7 @@ async def processar_mensagem_midia(whatsapp_id: str, midia_id: str):
         return
 
     if sessao.status == SessionStatus.PAUSADO:
-        sessao.status = SessionStatus.CLASSIFICANDO if not sessao.tipo_beneficio else SessionStatus.COLETANDO_DADOS
+        sessao.status = SessionStatus.CLASSIFICANDO if not sessao.tipo_beneficio else SessionStatus.AGUARDANDO_ADVOGADO
         sessao.motivo_pausa = None
         nome = sessao.dados_cliente.get("nome")
         resume_msg = f"Bem-vindo de volta, {nome}." if nome else "Bem-vindo de volta."

@@ -10,10 +10,7 @@ logger = logging.getLogger(__name__)
 from src.conversation.state import SessionState, SessionStatus
 from src.conversation.prompts import SYSTEM_PROMPT
 from src.agents.tools.classificar import classificar
-from src.agents.tools.validar import validar_dados
 from src.agents.constants import (
-    PERGUNTAS_CAMPOS, PERGUNTAS_SIMPLES, VALIDAR_CAMPO,
-    MESES_PT, UF_MAP, PADROES_CAMPO,
     MAX_TENTATIVAS_CLASSIFICACAO as _MAX_TENTATIVAS_CLASSIFICACAO,
     MIN_STEPS_EARLY_CLASSIFY as _MIN_STEPS_EARLY,
     MIN_STEPS_PARA_CONCLUIR as _MIN_STEPS_PARA_CONCLUIR,
@@ -26,21 +23,6 @@ from src.agents.constants import (
     MENSAGEM_FORA_ESCOPO, MENSAGEM_HUMANO, MENSAGEM_HUMANO_DUVIDA, SILENT,
     SINAIS_INCERTEZA as _SINAIS_INCERTEZA,
     PERGUNTAS_CLASSIFICACAO as _PERGUNTAS_CLASSIFICACAO,
-    PALAVRAS_SIM as _PALAVRAS_SIM,
-    PALAVRAS_NAO as _PALAVRAS_NAO,
-    PREFIXOS_NOME, PREFIXOS_RUA, NACIONALIDADES,
-)
-from src.agents.text_utils import (
-    verificar_sim as _verificar_sim,
-    verificar_nao as _verificar_nao,
-    normalizar_data as _normalizar_data,
-    normalizar_uf as _normalizar_uf,
-    extrair_nome as _extrair_nome,
-    validar_cpf_digitos as _validar_cpf,
-    sanitizar_id as _sanitizar_id,
-)
-from src.agents.extraction import (
-    extrair_e_salvar_campo as _extrair_e_salvar_campo,
 )
 
 # ── Inicializar LLM (DeepSeek > Verboo > Gemini > Claude) ──
@@ -327,10 +309,7 @@ async def _atualizar_sessao_por_tool(nome_tool: str, resultado: str, sessao: Ses
             sessao.tipo_beneficio = dados.get("tipo", sessao.tipo_beneficio)
             sessao.esfera = dados.get("esfera", sessao.esfera)
             if sessao.status == SessionStatus.CLASSIFICANDO:
-                sessao.status = SessionStatus.CONFIRMANDO
-
-    elif nome_tool == "validar_dados_cliente":
-        pass
+                sessao.status = SessionStatus.AGUARDANDO_ADVOGADO
 
 
 # ═══════════════════════════════════════════════════════════
@@ -351,16 +330,19 @@ async def _processar_fallback(texto: str, sessao: SessionState) -> str:
         await salvar_sessao(sessao)
         return SILENT
 
-    elif sessao.status == SessionStatus.CONFIRMANDO:
-        return await _processar_confirmando(texto, sessao)
+    elif sessao.status in (
+        SessionStatus.CONFIRMANDO,
+        SessionStatus.COLETANDO_DADOS,
+        SessionStatus.AGUARDANDO_DOC,
+        SessionStatus.GERANDO,
+    ):
+        sessao.human_attending = True
+        sessao.status = SessionStatus.AGUARDANDO_ADVOGADO
+        from src.conversation.storage import salvar_sessao
+        await salvar_sessao(sessao)
+        return MENSAGEM_HUMANO
 
-    elif sessao.status == SessionStatus.COLETANDO_DADOS:
-        return await _processar_coleta_dados(texto, sessao)
-
-    elif sessao.status == SessionStatus.AGUARDANDO_DOC:
-        return await _processar_aguardando_doc(sessao)
-
-    elif sessao.status in (SessionStatus.GERANDO, SessionStatus.REVISAO_ADVOGADO):
+    elif sessao.status == SessionStatus.REVISAO_ADVOGADO:
         return (
             "Seus documentos estao sendo processados. "
             "Em breve retornamos o contato."
@@ -415,17 +397,16 @@ async def _processar_classificando(texto: str, sessao: SessionState) -> str:
         sessao.tipo_beneficio = resultado["tipo"]
         sessao.esfera = resultado["esfera"]
         sessao.step = 0
-        sessao.status = SessionStatus.CONFIRMANDO
+        from src.services.attended_clients import mark_attended
+        await mark_attended(sessao.whatsapp_id)
+        sessao.human_attending = True
+        sessao.existing_client = True
+        sessao.status = SessionStatus.AGUARDANDO_ADVOGADO
         await salvar_sessao(sessao)
-        nome = sessao.dados_cliente.get("nome", "")
-        if nome:
-            return (
-                f"{nome}, ja entendi seu caso. "
-                "As informacoes que voce me deu estao corretas?"
-            )
         return (
-            "Ja entendi seu caso. "
-            "As informacoes que voce me deu estao corretas?"
+            "Perfeito, ja entendi seu caso. Para dar inicio ao seu atendimento, "
+            "me envie fotos do seu RG e CPF por aqui mesmo. "
+            "Assim que receber, ja comeco a preparar tudo."
         )
 
     if sessao.step > _MAX_TENTATIVAS_CLASSIFICACAO:
@@ -470,42 +451,6 @@ def _msg_variada(lista: list[str], sessao: SessionState, **kwargs) -> str:
     if kwargs:
         msg = msg.format(**kwargs)
     return msg
-
-
-async def _processar_confirmando(texto: str, sessao: SessionState) -> str:
-    from src.conversation.storage import salvar_sessao
-
-    if _verificar_sim(texto):
-        sessao.status = SessionStatus.COLETANDO_DADOS
-        sessao.step = 0
-        msg = (
-            "Perfeito, so mais alguns dados para finalizar:"
-        )
-        primeiro = _perguntar_proximo_campo(sessao)
-        await salvar_sessao(sessao)
-        return f"{msg} {primeiro}"
-
-    if _verificar_nao(texto):
-        sessao.tipo_beneficio = None
-        sessao.esfera = None
-        sessao.status = SessionStatus.CLASSIFICANDO
-        sessao.step += 1
-        if sessao.step >= _MAX_TENTATIVAS_CLASSIFICACAO:
-            sessao.status = SessionStatus.FORA_ESCOPO
-            sessao.motivo_pausa = "fora do escopo após múltiplas tentativas"
-            await salvar_sessao(sessao)
-            return MENSAGEM_FORA_ESCOPO
-        await salvar_sessao(sessao)
-        return (
-            "Entendi, deixa eu tentar de outra forma."
-            " Me conte o que voce precisa: auxilio-doenca,"
-            " aposentadoria, pensao ou revisao de beneficio."
-        )
-
-    return (
-        "As informacoes que voce forneceu estao corretas?"
-        " Pode me confirmar para eu dar prosseguimento."
-    )
 
 
 # ── Estado: trafego_pago ──
@@ -563,95 +508,6 @@ async def _processar_trafego_pago(texto: str, sessao: SessionState) -> str:
     return _msg_variada(_TRAFEGO_FINALIZAR, sessao, nome=nome)
 
 
-# ── Estado: coletando_dados ──
-
-async def _processar_coleta_dados(texto: str, sessao: SessionState) -> str:
-    from src.conversation.storage import salvar_sessao
-
-    _detectar_dificuldade(texto, sessao)
-
-    dados_antes = dict(sessao.dados_cliente)
-    _extrair_e_salvar_campo(texto, sessao)
-    dados_mudaram = sessao.dados_cliente != dados_antes
-
-    if not dados_mudaram:
-        campos_faltando = _campos_obrigatorios_faltando(sessao)
-        if campos_faltando:
-            prox = campos_faltando[0]
-            perguntas = PERGUNTAS_SIMPLES if sessao.simplify_mode else PERGUNTAS_CAMPOS
-            pergunta = perguntas.get(prox, f"Qual seu {prox}?")
-            if sessao.simplify_mode:
-                msg = f"Nao consegui entender. {pergunta}"
-            else:
-                msg = (
-                    f"Não consegui entender."
-                    f" {pergunta}"
-                    f" Se preferir, pode me dizer 'não lembro' ou pedir ajuda."
-                )
-            if sessao.step < 1:
-                sessao.step += 1
-                await salvar_sessao(sessao)
-                return msg
-            else:
-                return (
-                    f"Vamos tentar de outro jeito. {pergunta}"
-                    f" Se não souber, pode pedir pra pular este campo."
-                )
-
-    resultado_validacao = validar_dados(sessao.dados_cliente, sessao.tipo_beneficio or "outro")
-
-    if resultado_validacao["valido"]:
-        sessao.step = 0
-        sessao.status = SessionStatus.AGUARDANDO_DOC
-        return await _processar_aguardando_doc(sessao)
-
-    if resultado_validacao["campos_faltantes"]:
-        faltando = resultado_validacao["campos_faltantes"]
-        sessao.step = 0
-        await salvar_sessao(sessao)
-        return _perguntar_proximo_campo(sessao, campos_faltando=faltando)
-
-    if resultado_validacao["inconsistencias"]:
-        inconsistencias = resultado_validacao["inconsistencias"]
-        sessao.step += 1
-
-        mensagem = "Encontrei alguns problemas nos dados:\n"
-        for inc in inconsistencias:
-            mensagem += f"  - {inc}\n"
-
-        if sessao.step >= _MAX_TENTATIVAS_CLASSIFICACAO + 1:
-            sessao.dados_cliente.pop("cpf", None)
-            sessao.dados_cliente.pop("rg", None)
-            sessao.dados_cliente.pop("email", None)
-            sessao.dados_cliente.pop("telefone", None)
-            sessao.dados_cliente.pop("cep", None)
-            mensagem += (
-                "\nVou limpar esses campos pra você. "
-                "Me informe novamente com calma. "
-            )
-        elif any("CPF" in inc for inc in inconsistencias):
-            mensagem += (
-                "\nParece que o CPF não está válido. "
-                "Pode verificar se digitou corretamente? "
-                "Se preferir, pode enviar uma foto do seu CPF que eu leio. "
-            )
-        else:
-            mensagem += "\nPode corrigir esses dados? "
-
-        await salvar_sessao(sessao)
-        return mensagem
-
-    return MENSAGEM_NAO_ENTENDI
-
-
-def _campos_obrigatorios_faltando(sessao: SessionState,
-                                  resultado_validacao: dict | None = None) -> list[str]:
-    if resultado_validacao is None:
-        from src.agents.tools.validar import validar_dados
-        resultado_validacao = validar_dados(sessao.dados_cliente, sessao.tipo_beneficio or "outro")
-    return resultado_validacao["campos_faltantes"]
-
-
 def _detectar_dificuldade(texto: str, sessao: SessionState) -> bool:
     t = texto.strip().lower()
     if any(s in t for s in _SINAIS_DIFICULDADE):
@@ -661,60 +517,3 @@ def _detectar_dificuldade(texto: str, sessao: SessionState) -> bool:
         sessao.simplify_mode = True
         return True
     return sessao.simplify_mode
-
-
-def _perguntar_proximo_campo(sessao: SessionState,
-                              campos_faltando: list[str] | None = None) -> str:
-    if campos_faltando is None:
-        campos_faltando = _campos_obrigatorios_faltando(sessao)
-    if not campos_faltando:
-        return ""
-
-    campo = campos_faltando[0]
-    perguntas = PERGUNTAS_SIMPLES if sessao.simplify_mode else PERGUNTAS_CAMPOS
-    pergunta = perguntas.get(campo, f"Qual seu {campo}?")
-    return pergunta
-
-
-# ── Estado: aguardando_doc ──
-
-async def _processar_aguardando_doc(sessao: SessionState) -> str:
-    from src.conversation.storage import salvar_sessao
-    sessao.status = SessionStatus.GERANDO
-    await salvar_sessao(sessao)
-    return await _processar_gerando(sessao)
-
-
-
-
-
-# ── Estado: gerando ──
-
-async def _processar_gerando(sessao: SessionState, force: bool = False) -> str:
-    from src.conversation.storage import salvar_sessao
-    from src.services.attended_clients import mark_attended
-
-    if not force:
-        validacao = validar_dados(sessao.dados_cliente, sessao.tipo_beneficio or "outro")
-        if not validacao["valido"]:
-            mensagem = "Notei que alguns dados precisam de ajuste antes de finalizar:\n"
-            for inc in validacao.get("inconsistencias", []):
-                mensagem += f"  - {inc}\n"
-            if validacao.get("campos_faltantes"):
-                mensagem += "\nPreciso também de:\n"
-                for campo in validacao["campos_faltantes"]:
-                    mensagem += f"  - {campo}\n"
-            sessao.status = SessionStatus.COLETANDO_DADOS
-            await salvar_sessao(sessao)
-            if validacao.get("campos_faltantes"):
-                mensagem += f"\n{_perguntar_proximo_campo(sessao)}"
-            else:
-                mensagem += "\nPode corrigir esses dados? "
-            return mensagem
-
-    sessao.status = SessionStatus.CONCLUIDO
-    sessao.existing_client = True
-    await mark_attended(sessao.whatsapp_id)
-    await salvar_sessao(sessao)
-
-    return "Seu caso foi registrado com sucesso."

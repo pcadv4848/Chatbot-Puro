@@ -215,7 +215,7 @@ async def enviar_mensagem(request: Request, session_id: str = Form(...), texto: 
         sessao.status = (
             SessionStatus.CLASSIFICANDO
             if not sessao.tipo_beneficio
-            else SessionStatus.COLETANDO_DADOS
+            else SessionStatus.AGUARDANDO_ADVOGADO
         )
         sessao.motivo_pausa = None
         nome = sessao.dados_cliente.get("nome")
