@@ -153,6 +153,7 @@ async def processar(texto: str, sessao: SessionState) -> str:
         sessao.status = SessionStatus.CLASSIFICANDO
         sessao.existing_client = False
         sessao.human_attending = False
+        sessao.step = 0
         from src.conversation.storage import salvar_sessao
         await salvar_sessao(sessao)
         logger.info("Sessão CONCLUIDO reativada para nova mensagem")
@@ -219,16 +220,6 @@ async def _processar_ia(texto: str, sessao: SessionState) -> str:
             return MENSAGEM_QUOTA_EXCEDIDA
         return MENSAGEM_ERRO_IA
 
-    sessao.step += 1
-    if sessao.step > _MAX_TENTATIVAS_CLASSIFICACAO:
-        from src.services.attended_clients import mark_attended
-        await mark_attended(sessao.whatsapp_id)
-        sessao.human_attending = True
-        sessao.existing_client = True
-        sessao.status = SessionStatus.AGUARDANDO_ADVOGADO
-        await salvar_sessao(sessao)
-        return MENSAGEM_HUMANO
-
     for _ in range(2):
         if not hasattr(response, "tool_calls") or not response.tool_calls:
             break
@@ -281,6 +272,16 @@ async def _processar_ia(texto: str, sessao: SessionState) -> str:
                 return MENSAGEM_QUOTA_EXCEDIDA
             ultimo_conteudo = messages[-1].content if hasattr(messages[-1], "content") else ""
             return str(ultimo_conteudo) if ultimo_conteudo else MENSAGEM_ERRO_IA
+
+    sessao.step += 1
+    if sessao.step > _MAX_TENTATIVAS_CLASSIFICACAO:
+        from src.services.attended_clients import mark_attended
+        await mark_attended(sessao.whatsapp_id)
+        sessao.human_attending = True
+        sessao.existing_client = True
+        sessao.status = SessionStatus.AGUARDANDO_ADVOGADO
+        await salvar_sessao(sessao)
+        return MENSAGEM_HUMANO
 
     if hasattr(response, "content") and response.content:
         if _tem_incerteza(response.content):
@@ -383,11 +384,6 @@ async def _processar_classificando(texto: str, sessao: SessionState) -> str:
         sessao.resumo_caso = f"Cliente: {texto}\n"
     else:
         sessao.resumo_caso += f"Cliente: {texto}\n"
-
-    if sessao.step == 0 and not sessao.midia_inicial_enviada:
-        await _enviar_audio_inicial(sessao)
-        sessao.step += 1
-        return SILENT
 
     sessao.step += 1
     resultado = classificar(sessao.resumo_caso)
@@ -493,7 +489,7 @@ async def _processar_trafego_pago(texto: str, sessao: SessionState) -> str:
     resultado = classificar(sessao.resumo_caso)
     tipo = resultado.get("tipo", "outro")
     sessao.tipo_beneficio = tipo
-    sessao.esfera = resultado.get("esfera")
+    sessao.esfera = resultado.get("esfera", "adm")
 
     sessao.step = 0
     sessao.trafego_pago = False

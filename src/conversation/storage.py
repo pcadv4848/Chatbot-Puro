@@ -1,11 +1,12 @@
+import asyncio
 import json
 import logging
-import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
 from sqlalchemy import select, and_
+from sqlalchemy.exc import OperationalError, IntegrityError
 from src.conversation.state import SessionState, SessionStatus
 from src.config import settings
 from src.engine.crypto import decrypt_dict, decrypt_json
@@ -16,7 +17,18 @@ logger = logging.getLogger(__name__)
 
 # ── Fallback JSON ──
 STORAGE_DIR = Path(__file__).parent.parent.parent / "data" / "sessoes"
-LOCK = threading.Lock()
+LOCK = asyncio.Lock()
+
+_save_locks: dict[str, asyncio.Lock] = {}
+_save_locks_lock = asyncio.Lock()
+
+
+async def _get_save_lock(whatsapp_id: str) -> asyncio.Lock:
+    async with _save_locks_lock:
+        if whatsapp_id not in _save_locks:
+            _save_locks[whatsapp_id] = asyncio.Lock()
+        return _save_locks[whatsapp_id]
+
 ARCHIVE_AFTER_SECONDS = (settings.session_archive_days or 7) * 24 * 3600
 
 
@@ -147,6 +159,12 @@ async def _salvar_db(sessao: SessionState) -> bool:
                 db.add(SessaoModel(**dados))
             await db.commit()
         return True
+    except OperationalError as e:
+        logger.warning("DB save failed for %s (operational): %s — falling back to JSON", sessao.whatsapp_id, e)
+        return False
+    except IntegrityError as e:
+        logger.warning("DB save failed for %s (integrity): %s — falling back to JSON", sessao.whatsapp_id, e)
+        return False
     except Exception as e:
         logger.warning("DB save failed for %s: %s — falling back to JSON", sessao.whatsapp_id, e)
         return False
@@ -209,22 +227,22 @@ async def _carregar_todas_db() -> tuple[dict[str, SessionState], bool]:
 
 # ── Operações JSON (sync fallback) ──
 
-def _salvar_json(sessao: SessionState) -> None:
+async def _salvar_json(sessao: SessionState) -> None:
     try:
         caminho = _caminho_sessao(sessao.whatsapp_id)
-        with LOCK:
+        async with LOCK:
             with open(caminho, "w", encoding="utf-8") as f:
                 json.dump(_serializar_json(sessao), f, ensure_ascii=False, indent=2)
     except Exception as e:
         logger.error("JSON save failed for %s: %s", sessao.whatsapp_id, e)
 
 
-def _carregar_json(whatsapp_id: str) -> Optional[SessionState]:
+async def _carregar_json(whatsapp_id: str) -> Optional[SessionState]:
     caminho = _caminho_sessao(whatsapp_id)
     if not caminho.exists():
         return None
     try:
-        with LOCK:
+        async with LOCK:
             with open(caminho, "r", encoding="utf-8") as f:
                 dados = json.load(f)
         return _desserializar_json(dados)
@@ -233,12 +251,12 @@ def _carregar_json(whatsapp_id: str) -> Optional[SessionState]:
         return None
 
 
-def _listar_arquivaveis_json() -> list[str]:
+async def _listar_arquivaveis_json() -> list[str]:
     if not STORAGE_DIR.exists():
         return []
     agora = datetime.now(timezone.utc).timestamp()
     arquivaveis = []
-    with LOCK:
+    async with LOCK:
         for arquivo in STORAGE_DIR.glob("sessao_*.json"):
             try:
                 with open(arquivo, "r", encoding="utf-8") as f:
@@ -260,11 +278,11 @@ def _listar_arquivaveis_json() -> list[str]:
     return arquivaveis
 
 
-def _carregar_todas_json() -> dict[str, SessionState]:
+async def _carregar_todas_json() -> dict[str, SessionState]:
     sessoes = {}
     if not STORAGE_DIR.exists():
         return sessoes
-    with LOCK:
+    async with LOCK:
         for arquivo in STORAGE_DIR.glob("sessao_*.json"):
             try:
                 with open(arquivo, "r", encoding="utf-8") as f:
@@ -281,23 +299,27 @@ def _carregar_todas_json() -> dict[str, SessionState]:
 # ── API pública ──
 
 async def salvar_sessao(sessao: SessionState) -> None:
-    sessao.ultima_atividade = datetime.now(timezone.utc).isoformat()
-    ok = await _salvar_db(sessao)
-    if not ok:
-        _salvar_json(sessao)
+    lock = await _get_save_lock(sessao.whatsapp_id)
+    async with lock:
+        if len(sessao.conversa) > 100:
+            sessao.conversa = sessao.conversa[-50:]
+        sessao.ultima_atividade = datetime.now(timezone.utc).isoformat()
+        ok = await _salvar_db(sessao)
+        if not ok:
+            await _salvar_json(sessao)
 
 
 async def carregar_sessao(whatsapp_id: str) -> Optional[SessionState]:
     sessao = await _carregar_db(whatsapp_id)
     if sessao is None:
-        sessao = _carregar_json(whatsapp_id)
+        sessao = await _carregar_json(whatsapp_id)
     return sessao
 
 
 async def listar_sessoes_arquivaveis() -> list[str]:
     ids, db_ok = await _listar_arquivaveis_db()
     if not db_ok:
-        ids = _listar_arquivaveis_json()
+        ids = await _listar_arquivaveis_json()
     return ids
 
 
@@ -338,7 +360,7 @@ async def deletar_sessao(whatsapp_id: str) -> None:
 async def carregar_todas_sessoes() -> dict[str, SessionState]:
     sessoes, db_ok = await _carregar_todas_db()
     if not db_ok:
-        sessoes = _carregar_todas_json()
+        sessoes = await _carregar_todas_json()
     return sessoes
 
 

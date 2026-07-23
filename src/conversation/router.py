@@ -352,7 +352,6 @@ async def webhook_whatsapp(request: Request):
                         continue
 
                     if msg_type == "text" and body:
-                        admin_cmd = msg.get("admin_cmd", False)
                         ativar_silencioso = msg.get("_ativar_silencioso", False)
                         if admin_cmd or is_admin:
                             wa_id = whatsapp_id
@@ -367,7 +366,6 @@ async def webhook_whatsapp(request: Request):
                             sessao.pending_messages.append(body)
                             if msg_id and msg_id not in sessao.processed_message_ids:
                                 sessao.processed_message_ids.append(msg_id)
-                            await salvar_sessao(sessao)
                             if whatsapp_id not in _debounce_tasks or _debounce_tasks[whatsapp_id].done():
                                 _debounce_tasks[whatsapp_id] = asyncio.create_task(
                                     _processar_com_debounce(whatsapp_id)
@@ -439,6 +437,10 @@ async def webhook_whatsapp(request: Request):
                     track_entry["erro"] = f"msg_{i}: {err_msg}"
             track_entry["status"] = "concluido"
             track_entry["fim"] = datetime.now(timezone.utc).isoformat()
+        except asyncio.CancelledError:
+            track_entry["status"] = "cancelado"
+            track_entry["fim"] = datetime.now(timezone.utc).isoformat()
+            raise
         except Exception as e:
             track_entry["status"] = f"erro: {e}"
             track_entry["fim"] = datetime.now(timezone.utc).isoformat()
@@ -482,17 +484,14 @@ async def _obter_ou_criar_sessao(whatsapp_id: str) -> SessionState:
             logger.info("Sessão arquivada reativada para %s", whatsapp_id)
 
     async with _sessoes_lock:
-        sessoes_ativas[key] = sessao
-    logger.debug("_obter_ou_criar_sessao(%s): final existing_client=%s", whatsapp_id, sessao.existing_client)
-    return sessao
+        if key not in sessoes_ativas:
+            sessoes_ativas[key] = sessao
+        return sessoes_ativas[key]
 
 
 async def _salvar_e_enviar(sessao: SessionState, whatsapp_id: str, resposta: str):
     if _eh_mensagem_duplicada(resposta, sessao.sent_messages):
         logger.info("Mensagem duplicada detectada para %s — pulando envio: '%s'", whatsapp_id, resposta[:80])
-        sessao.sent_messages.append(resposta)
-        if len(sessao.sent_messages) > 50:
-            sessao.sent_messages = sessao.sent_messages[-50:]
         await salvar_sessao(sessao)
         return
     sessao.sent_messages.append(resposta)
@@ -648,6 +647,8 @@ async def tarefa_arquivamento():
     while True:
         try:
             await arquivar_sessoes_inativas(sessoes_ativas)
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
             logger.error("Erro na tarefa de arquivamento: %s", e)
         await asyncio.sleep(3600)
