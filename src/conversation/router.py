@@ -409,8 +409,7 @@ async def webhook_whatsapp(request: Request):
                         else:
                             await enviar_mensagem(
                                 whatsapp_id,
-                                f"Recebi seu {msg_type}. Infelizmente ainda não consigo "
-                                f"processar {msg_type}. Pode me enviar por texto?"
+                                f"Não consegui ouvir direito, pode me enviar por texto?"
                             )
 
                     if sessao and msg_id:
@@ -428,8 +427,8 @@ async def webhook_whatsapp(request: Request):
                         if not timeout_sessao.existing_client:
                             await enviar_mensagem(
                                 msg["from"],
-                                "Desculpe, estou demorando mais que o normal. "
-                                "Pode tentar novamente? "
+                                "Desculpe, estou demorando mais que o normal."
+                                " Pode me enviar a mensagem novamente?"
                             )
                     except Exception as e:
                         track_entry["erro_envio_timeout"] = str(e)
@@ -516,9 +515,8 @@ async def _verificar_inatividade(sessao: SessionState, whatsapp_id: str) -> Opti
             sessao.motivo_pausa = "inatividade"
             await salvar_sessao(sessao)
             return (
-                "Ola, seu atendimento estava pausado por inatividade.\n\n"
-                "Se quiser retomar de onde parou, e so me dizer."
-                " Ou se mudou de ideia, pode me avisar tambem."
+                "Olá, tudo bem? Ficou um tempo sem responder."
+                " Se quiser continuar de onde paramos, é só me falar."
             )
     except (ValueError, TypeError) as e:
         logger.warning("Erro ao verificar inatividade da sessão %s: %s", whatsapp_id, e)
@@ -591,8 +589,7 @@ async def processar_mensagem_texto(whatsapp_id: str, texto: str, admin_cmd: bool
         sessao.status = SessionStatus.PAUSADO
         sessao.motivo_pausa = "abandono voluntário"
         resposta = (
-            "Sem problemas. Seu cadastro foi salvo. "
-            "Quando quiser retomar, e so me chamar aqui."
+            "Sem problemas, quando quiser retomar, é só me chamar."
         )
         sessao.conversa.append({"role": "user", "content": _user_content})
         sessao.conversa.append({"role": "assistant", "content": resposta})
@@ -604,9 +601,9 @@ async def processar_mensagem_texto(whatsapp_id: str, texto: str, admin_cmd: bool
         sessao.motivo_pausa = None
         nome = sessao.dados_cliente.get("nome")
         if nome:
-            resume_msg = f"Bem-vindo de volta, {nome}. Vamos continuar de onde paramos?"
+            resume_msg = f"{nome}, que bom que você voltou. Vamos continuar?"
         else:
-            resume_msg = "Bem-vindo de volta. Vamos continuar de onde paramos?"
+            resume_msg = "Que bom que você voltou. Vamos continuar?"
         sessao.conversa.append({"role": "assistant", "content": resume_msg})
         await _salvar_e_enviar(sessao, whatsapp_id, resume_msg)
         return
@@ -637,7 +634,7 @@ async def processar_mensagem_midia(whatsapp_id: str, midia_id: str):
         sessao.status = SessionStatus.CLASSIFICANDO if not sessao.tipo_beneficio else SessionStatus.AGUARDANDO_ADVOGADO
         sessao.motivo_pausa = None
         nome = sessao.dados_cliente.get("nome")
-        resume_msg = f"Bem-vindo de volta, {nome}." if nome else "Bem-vindo de volta."
+        resume_msg = f"{nome}, que bom que você voltou." if nome else "Que bom que você voltou."
         sessao.conversa.append({"role": "user", "content": f"[midia: {midia_id}]"})
         sessao.conversa.append({"role": "assistant", "content": resume_msg})
         await _salvar_e_enviar(sessao, whatsapp_id, resume_msg)

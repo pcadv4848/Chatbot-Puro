@@ -41,10 +41,10 @@ def _ler_followup_texto() -> str:
     except Exception as e:
         logger.warning("Erro ao ler FollowUp.txt: %s", e)
     return (
-        "Ola, notei que sua conversa conosco ficou pendente. \n\n"
-        "Ainda precisa de ajuda com seu caso? "
-        "Estou aqui para entender sua situacao e te ajudar. "
-        "E so me enviar uma mensagem."
+        "Olá, vi que sua conversa ficou parada. \n\n"
+        "Ainda precisa de ajuda com seu caso?"
+        " Estou aqui para entender sua situação e te ajudar,"
+        " é só me chamar."
     )
 
 

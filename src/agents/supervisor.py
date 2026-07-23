@@ -344,8 +344,8 @@ async def _processar_fallback(texto: str, sessao: SessionState) -> str:
 
     elif sessao.status == SessionStatus.REVISAO_ADVOGADO:
         return (
-            "Seus documentos estao sendo processados. "
-            "Em breve retornamos o contato."
+            "Recebi seus documentos. Estou revisando tudo e"
+            " volto a falar com você em breve."
         )
 
     elif sessao.status == SessionStatus.FORA_ESCOPO:
@@ -367,8 +367,8 @@ async def _processar_fallback(texto: str, sessao: SessionState) -> str:
 
     elif sessao.status == SessionStatus.PAUSADO:
         return (
-            "Ola, seu atendimento estava pausado. "
-            "Se quiser retomar, e so me dizer o que precisa."
+            "Olá, tudo bem? Se quiser retomar de onde paramos é"
+            " só me falar."
         )
 
     return MENSAGEM_NAO_ENTENDI
@@ -404,9 +404,8 @@ async def _processar_classificando(texto: str, sessao: SessionState) -> str:
         sessao.status = SessionStatus.AGUARDANDO_ADVOGADO
         await salvar_sessao(sessao)
         return (
-            "Perfeito, ja entendi seu caso. Para dar inicio ao seu atendimento, "
-            "me envie fotos do seu RG e CPF por aqui mesmo. "
-            "Assim que receber, ja comeco a preparar tudo."
+            "Perfeito, já entendi seu caso. Vou dar continuidade ao seu atendimento."
+            " Me envie fotos do seu RG e CPF por aqui mesmo que já começo a preparar tudo."
         )
 
     if sessao.step > _MAX_TENTATIVAS_CLASSIFICACAO:
@@ -425,7 +424,7 @@ async def _processar_classificando(texto: str, sessao: SessionState) -> str:
     if nome:
         pergunta = f"{nome}, {pergunta}"
     if sessao.step == 1:
-        return f"Ola, {pergunta}"
+        return f"Olá, {pergunta}"
     return pergunta
 
 
@@ -474,12 +473,12 @@ async def _processar_trafego_pago(texto: str, sessao: SessionState) -> str:
     if sessao.step == 1:
         nome = t
         if len(nome) < 3 or re.search(r"\d", nome):
-            return "Desculpe, nao entendi o nome. Pode me dizer seu nome completo?"
+            return "Não consegui entender seu nome, pode repetir?"
         palavras_recusadas = {"nao", "não", "nao quero", "não quero", "por que", "porque", "qual", "como assim"}
         if any(p in nome.lower() for p in palavras_recusadas):
-            return "Entendo que pode ser pessoal, mas preciso do seu nome para dar continuidade. Pode me informar?"
+            return "Entendo, mas preciso saber seu nome para dar andamento, pode me dizer?"
         if len(nome.split()) > 6:
-            return "Pode me informar apenas seu nome completo?"
+            return "Só o nome completo mesmo, por favor."
         sessao.dados_cliente["nome"] = nome
         sessao.step = 2
         sessao.historico_perguntas.append({"pergunta": "nome", "resposta": nome})

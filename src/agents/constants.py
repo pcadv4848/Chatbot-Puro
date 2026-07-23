@@ -137,18 +137,18 @@ EARLY_CLASSIFY_CONFIDENCE = 0.7
 
 # ── Mensagens do fluxo de tráfego pago ──
 TRAFEGO_SAUDACAO = [
-    "Aqui e da Advocacia Penido Castro. Como voce se chama?",
-    "Penido Castro. Qual o seu nome?",
+    "Pode me dizer seu nome?",
+    "Como eu posso te chamar?",
 ]
 
 TRAFEGO_HISTORIA = [
-    "Prazer, {nome}. Me conta um pouco sobre o que esta acontecendo.",
-    "{nome}, me explique resumidamente qual e a situacao.",
+    "Prazer, {nome}, me conta um pouco sobre o que está acontecendo.",
+    "{nome}, me explica melhor qual é a situação?",
 ]
 
 TRAFEGO_FINALIZAR = [
-    "Perfeito, {nome}. Ja entendi seu caso. Vou registrar e dar inicio ao seu atendimento.",
-    "Entendi, {nome}. Deixa que eu cuido disso agora mesmo.",
+    "Perfeito, {nome}, já entendi seu caso e vou dar continuidade ao seu atendimento.",
+    "Entendi, {nome}, pode deixar que eu cuido disso agora mesmo.",
 ]
 
 # ── Sinais de dificuldade ──
@@ -169,31 +169,31 @@ SINAIS_DIFICULDADE = frozenset({
 })
 
 # ── Mensagens fixas ──
-MENSAGEM_NAO_ENTENDI = "Não entendi. Pode repetir? "
+MENSAGEM_NAO_ENTENDI = "Não consegui entender direito, pode me explicar de novo?"
 
 MENSAGEM_ERRO_IA = (
-    "Desculpe, estou com dificuldades para processar sua mensagem agora."
-    " Pode tentar novamente em alguns instantes?"
+    "Houve um problema no envio da mensagem,"
+    " poderia enviar novamente?"
 )
 
 MENSAGEM_QUOTA_EXCEDIDA = (
-    "Excedemos o limite de uso no momento."
-    " Aguarde alguns instantes e tente novamente."
+    "Houve um problema no envio da mensagem,"
+    " poderia enviar novamente?"
 )
 
 MENSAGEM_FORA_ESCOPO = (
-    "Certo. Vou passar seu caso para um advogado da nossa equipe"
-    " analisar pessoalmente e dar continuidade."
+    "Certo, deixa que eu mesmo vou analisar seu caso"
+    " e dar continuidade ao atendimento."
 )
 
 MENSAGEM_HUMANO = (
-    "Perfeito. Seu caso foi registrado com sucesso."
-    " Um advogado da nossa equipe vai preparar seus documentos."
+    "Vamos dar continuidade com seu atendimento."
+    " Deixe que eu mesmo vou preparar tudo para você."
 )
 
 MENSAGEM_HUMANO_DUVIDA = (
-    "Essa é uma boa pergunta. Prefiro que um advogado da nossa equipe"
-    " analise seu caso pessoalmente para te passar a informação correta."
+    "Essa é uma boa pergunta, vou analisar seu caso pessoalmente"
+    " e volto com a informação certa."
 )
 
 SILENT = "__SILENT__"
@@ -228,10 +228,10 @@ SINAIS_INCERTEZA = frozenset({
 
 # ── Perguntas progressivas para classificação (poucas para fluxo rápido) ──
 PERGUNTAS_CLASSIFICACAO = [
-    "me conte um pouco sobre o que esta acontecendo.",
-    "ha quanto tempo voce esta nessa situacao?",
-    "ja contribuiu para o INSS alguma vez?",
-    "tem alguma questao de saude envolvida?",
+    "me conta, o que está acontecendo?",
+    "e há quanto tempo você está nessa situação?",
+    "já contribuiu para o INSS alguma vez?",
+    "tem alguma questão de saúde envolvida?",
     "gostaria de acrescentar mais alguma coisa?",
 ]
 
