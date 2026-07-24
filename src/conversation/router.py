@@ -280,15 +280,19 @@ async def webhook_whatsapp(request: Request):
                     if msg.get("_human_reply"):
                         if not sessao:
                             sessao = await _obter_ou_criar_sessao(whatsapp_id)
-                        sessao.human_attending = True
-                        sessao.existing_client = True
-                        sessao.status = SessionStatus.AGUARDANDO_ADVOGADO
-                        sessao.conversa.append({"role": "user", "content": f"[humano respondeu: {body[:150]}]"})
+                        sessao.human_reply_count += 1
+                        if sessao.human_reply_count >= 5:
+                            sessao.human_attending = True
+                            sessao.existing_client = True
+                            sessao.status = SessionStatus.AGUARDANDO_ADVOGADO
+                            sessao.conversa.append({"role": "user", "content": f"[humano respondeu: {body[:150]}]"})
+                            logger.info("Resposta humana detectada — sessão %s marcada como human_attending (count=%d)", whatsapp_id, sessao.human_reply_count)
+                        else:
+                            logger.info("Resposta humana ignorada — aguardando contagem %d/5 para sessão %s", sessao.human_reply_count, whatsapp_id)
                         await salvar_sessao(sessao)
                         if msg_id and msg_id not in sessao.processed_message_ids:
                             sessao.processed_message_ids.append(msg_id)
                         track_entry["status"] = f"human_detected_{whatsapp_id}"
-                        logger.info("Resposta humana detectada — sessão %s marcada como human_attending", whatsapp_id)
                         continue
 
                     if sessao and not sessao.existing_client:
