@@ -25,10 +25,10 @@ from src.agents.text_utils import eh_mensagem_duplicada as _eh_mensagem_duplicad
 from src.config import settings
 from src.engine.rate_limit import limiter
 from src.services.transcricao import transcrever_audio_async, disponivel as whisper_disponivel
-from src.services.whatsapp_openwa import _ultimos_envios
 
 from src.conversation.jid_utils import session_key as _session_key, extrair_whatsapp_id as _extrair_whatsapp_id, mesmo_telefone
 from src.conversation.admin_commands import processar_admin_commands as _admin_commands, set_storage_dir as _set_cmd_storage_dir
+from src.services.whatsapp_openwa import _ultimos_envios as _bot_ultimos_envios
 
 logger = logging.getLogger(__name__)
 
@@ -129,24 +129,23 @@ def _parse_openwa_payload(payload: dict) -> list[dict]:
         body = (data.get("body", "") or "").strip()
         from_jid = data.get("from", "")
         to_jid = data.get("to", "")
-        if from_jid and to_jid:
-            sender = _extrair_whatsapp_id(from_jid)
-            target = _extrair_whatsapp_id(to_jid)
-            if not _bot_phone_number:
-                _bot_phone_number = sender
-                logger.info("Número do bot descoberto via message.sent: %s", _bot_phone_number)
-
-            if _bot_phone_number and mesmo_telefone(sender, _bot_phone_number):
-                if any(body.startswith(cmd) for cmd in _ADMIN_INPUTS):
-                    return [{"id": data.get("id", ""), "from": target,
-                             "type": "text", "body": body, "admin_cmd": True}]
-                target_key = target.split("@")[0] if "@" in target else target
-                last_bot_send = _ultimos_envios.get(target_key, 0)
-                if time.time() - last_bot_send > 10.0:
-                    logger.info("Humano detectado respondendo para %s via message.sent", target)
-                    return [{"id": data.get("id", ""), "from": target,
-                             "type": "text", "body": body, "_human_reply": True}]
-                return []
+        if not from_jid or not to_jid:
+            return []
+        sender = _extrair_whatsapp_id(from_jid)
+        target = _extrair_whatsapp_id(to_jid)
+        if not _bot_phone_number:
+            _bot_phone_number = sender
+            logger.info("Número do bot descoberto via message.sent: %s", _bot_phone_number)
+        if _bot_phone_number and mesmo_telefone(sender, _bot_phone_number):
+            if body and any(body.startswith(cmd) for cmd in _ADMIN_INPUTS):
+                return [{"id": data.get("id", ""), "from": target,
+                         "type": "text", "body": body, "admin_cmd": True}]
+            key = target.split("@")[0] if "@" in target else target
+            ultimo_envio = _bot_ultimos_envios.get(key, 0)
+            if ultimo_envio > 0 and time.time() - ultimo_envio > 3.0:
+                logger.info("Lawyer reply detectado para %s (body='%s')", target, body[:80] if body else "")
+                return [{"id": data.get("id", ""), "from": target,
+                         "type": "text", "body": body, "admin_cmd": False, "lawyer_reply": True}]
         return []
     if event not in ("message.received", "messages.upsert"):
         return []
@@ -272,28 +271,28 @@ async def webhook_whatsapp(request: Request):
                     midia_data = msg.get("midia_data", "")
                     admin_cmd = msg.get("admin_cmd", False)
 
+                    lawyer_reply = msg.get("lawyer_reply", False)
+                    if lawyer_reply:
+                        sessao = await _obter_ou_criar_sessao(whatsapp_id)
+                        teve_interacao = any(
+                            m.get("role") == "assistant" for m in sessao.conversa
+                        )
+                        if not teve_interacao:
+                            logger.info("message.sent ignorado para %s — bot nunca interagiu (auto-greeting)", whatsapp_id)
+                            continue
+                        from src.services.attended_clients import mark_attended
+                        await mark_attended(whatsapp_id)
+                        sessao.human_attending = True
+                        sessao.existing_client = True
+                        sessao.status = SessionStatus.AGUARDANDO_ADVOGADO
+                        await salvar_sessao(sessao)
+                        logger.info("Lawyer reply: cliente %s marcado como atendido", whatsapp_id)
+                        continue
+
                     if msg_id and whatsapp_id:
                         sessao = await _obter_ou_criar_sessao(whatsapp_id)
                         if hasattr(sessao, "processed_message_ids") and msg_id in sessao.processed_message_ids:
                             continue
-
-                    if msg.get("_human_reply"):
-                        if not sessao:
-                            sessao = await _obter_ou_criar_sessao(whatsapp_id)
-                        sessao.human_reply_count += 1
-                        if sessao.human_reply_count >= 5:
-                            sessao.human_attending = True
-                            sessao.existing_client = True
-                            sessao.status = SessionStatus.AGUARDANDO_ADVOGADO
-                            sessao.conversa.append({"role": "user", "content": f"[humano respondeu: {body[:150]}]"})
-                            logger.info("Resposta humana detectada — sessão %s marcada como human_attending (count=%d)", whatsapp_id, sessao.human_reply_count)
-                        else:
-                            logger.info("Resposta humana ignorada — aguardando contagem %d/5 para sessão %s", sessao.human_reply_count, whatsapp_id)
-                        await salvar_sessao(sessao)
-                        if msg_id and msg_id not in sessao.processed_message_ids:
-                            sessao.processed_message_ids.append(msg_id)
-                        track_entry["status"] = f"human_detected_{whatsapp_id}"
-                        continue
 
                     if sessao and not sessao.existing_client:
                         from src.services.attended_clients import is_attended
@@ -477,11 +476,9 @@ async def _obter_ou_criar_sessao(whatsapp_id: str) -> SessionState:
         logger.debug("_obter_ou_criar_sessao(%s): NOVA sessao", whatsapp_id)
         sessao = SessionState(whatsapp_id=whatsapp_id)
     else:
-        logger.debug("_obter_ou_criar_sessao(%s): carregada do disco, status=%s, existing_client=%s",
-                     whatsapp_id, sessao.status.value, sessao.existing_client)
+        logger.debug("_obter_ou_criar_sessao(%s): carregada do disco, status=%s, existing_client=%s, human_attending=%s",
+                     whatsapp_id, sessao.status.value if sessao.status else None, sessao.existing_client, sessao.human_attending)
         sessao.whatsapp_id = whatsapp_id
-        sessao.existing_client = True
-        logger.debug("_obter_ou_criar_sessao(%s): sessao existente no disco → existing_client=True", whatsapp_id)
         if sessao.status == SessionStatus.PAUSADO:
             logger.info("Sessão retomada para %s", whatsapp_id)
         elif sessao.status == SessionStatus.ARQUIVADO:
@@ -506,6 +503,8 @@ async def _salvar_e_enviar(sessao: SessionState, whatsapp_id: str, resposta: str
 
 
 async def _verificar_inatividade(sessao: SessionState, whatsapp_id: str) -> Optional[str]:
+    if sessao.human_attending or sessao.existing_client:
+        return None
     try:
         ultima = datetime.fromisoformat(sessao.ultima_atividade)
         if ultima.tzinfo is None:
@@ -554,15 +553,19 @@ async def processar_mensagem_texto(whatsapp_id: str, texto: str, admin_cmd: bool
     if not admin_cmd and is_admin:
         admin_cmd = True
 
+    if not is_admin and not admin_cmd:
+        if sessao.human_attending or sessao.existing_client:
+            sessao.conversa.append({"role": "user", "content": _user_content})
+            await salvar_sessao(sessao)
+            return
+
     cmd_resposta = await _admin_commands(texto, sessao, admin_cmd=admin_cmd, cache=sessoes_ativas)
     if cmd_resposta is not None:
         sessao.conversa.append({"role": "user", "content": _user_content})
         sessao.conversa.append({"role": "assistant", "content": cmd_resposta})
         if admin_cmd and not is_admin:
             logger.info("Admin cmd via message.sent: %s na sessão %s", texto, whatsapp_id)
-            await salvar_sessao(sessao)
-        else:
-            await _salvar_e_enviar(sessao, whatsapp_id, cmd_resposta)
+        await _salvar_e_enviar(sessao, whatsapp_id, cmd_resposta)
         return
 
     if ativar_silencioso:
@@ -626,6 +629,11 @@ async def processar_mensagem_texto(whatsapp_id: str, texto: str, admin_cmd: bool
 
 async def processar_mensagem_midia(whatsapp_id: str, midia_id: str):
     sessao = await _obter_ou_criar_sessao(whatsapp_id)
+
+    if sessao.human_attending or sessao.existing_client:
+        sessao.conversa.append({"role": "user", "content": f"[midia: {midia_id}]"})
+        await salvar_sessao(sessao)
+        return
 
     msg_inatividade = await _verificar_inatividade(sessao, whatsapp_id)
     if msg_inatividade:

@@ -284,16 +284,6 @@ async def _processar_ia(texto: str, sessao: SessionState) -> str:
         return MENSAGEM_HUMANO
 
     if hasattr(response, "content") and response.content:
-        if _tem_incerteza(response.content):
-            logger.info("IA demonstrou incerteza — transferindo para humano na sessão %s", sessao.whatsapp_id)
-            from src.services.attended_clients import mark_attended
-            await mark_attended(sessao.whatsapp_id)
-            sessao.human_attending = True
-            sessao.existing_client = True
-            sessao.status = SessionStatus.AGUARDANDO_ADVOGADO
-            sessao.step = 0
-            await salvar_sessao(sessao)
-            return MENSAGEM_HUMANO_DUVIDA
         return response.content
     return MENSAGEM_ERRO_IA
 
@@ -385,6 +375,7 @@ async def _processar_classificando(texto: str, sessao: SessionState) -> str:
     else:
         sessao.resumo_caso += f"Cliente: {texto}\n"
 
+    primeira_interacao = sessao.step == 1
     sessao.step += 1
     resultado = classificar(sessao.resumo_caso)
     confianca = resultado["confianca"]
@@ -414,12 +405,12 @@ async def _processar_classificando(texto: str, sessao: SessionState) -> str:
         await salvar_sessao(sessao)
         return MENSAGEM_HUMANO
 
-    idx_pergunta = min(sessao.step - 1, len(_PERGUNTAS_CLASSIFICACAO) - 1)
+    idx_pergunta = 0 if primeira_interacao else min(sessao.step - 1, len(_PERGUNTAS_CLASSIFICACAO) - 1)
     pergunta = _PERGUNTAS_CLASSIFICACAO[idx_pergunta]
     nome = sessao.dados_cliente.get("nome", "")
     if nome:
         pergunta = f"{nome}, {pergunta}"
-    if sessao.step == 1:
+    if primeira_interacao:
         return f"Olá, {pergunta}"
     return pergunta
 

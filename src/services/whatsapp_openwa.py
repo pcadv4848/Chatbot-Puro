@@ -138,30 +138,35 @@ async def _enviar_mensagem_uma_vez(whatsapp_id: str, texto: str) -> dict:
 
     await _rate_limit_envio()
 
+    key = whatsapp_id.split("@")[0] if "@" in whatsapp_id else whatsapp_id
+    _ultimos_envios[key] = time.time()
+
     payload = {
         "chatId": _normalizar_id(whatsapp_id),
         "text": texto,
     }
     client = await get_client()
-    resp = await client.post(
-        f"{_get_base_url()}/sessions/{await _get_session_id_garantido()}/messages/send-text",
-        json=payload,
-        headers=_get_headers(),
-    )
-    if resp.status_code >= 400:
-        body_text = resp.text[:2000]
-        _ultimo_erro_envio = {
-            "status_code": resp.status_code,
-            "body": body_text,
-            "whatsapp_id": whatsapp_id,
-            "texto": texto[:200],
-            "session_id": await _get_session_id_garantido(),
-        }
-        logger.error("OpenWA send-text error %s: %s", resp.status_code, body_text)
-    resp.raise_for_status()
+    try:
+        resp = await client.post(
+            f"{_get_base_url()}/sessions/{await _get_session_id_garantido()}/messages/send-text",
+            json=payload,
+            headers=_get_headers(),
+        )
+        if resp.status_code >= 400:
+            body_text = resp.text[:2000]
+            _ultimo_erro_envio = {
+                "status_code": resp.status_code,
+                "body": body_text,
+                "whatsapp_id": whatsapp_id,
+                "texto": texto[:200],
+                "session_id": await _get_session_id_garantido(),
+            }
+            logger.error("OpenWA send-text error %s: %s", resp.status_code, body_text)
+        resp.raise_for_status()
+    except Exception:
+        _ultimos_envios.pop(key, None)
+        raise
     _ultimo_erro_envio = None  # limpa erro anterior no sucesso
-    key = whatsapp_id.split("@")[0] if "@" in whatsapp_id else whatsapp_id
-    _ultimos_envios[key] = time.time()
     if len(_ultimos_envios) > 1000:
         agora = time.time()
         expirados = [k for k, v in _ultimos_envios.items() if agora - v > 3600]
@@ -248,6 +253,9 @@ async def _enviar_midia_uma_vez(whatsapp_id: str, url_midia: str, tipo: str = "i
     }
     endpoint = tipo_map.get(tipo, "send-image")
 
+    key = whatsapp_id.split("@")[0] if "@" in whatsapp_id else whatsapp_id
+    _ultimos_envios[key] = time.time()
+
     payload = {
         "chatId": _normalizar_id(whatsapp_id),
         "url": url_midia,
@@ -255,12 +263,21 @@ async def _enviar_midia_uma_vez(whatsapp_id: str, url_midia: str, tipo: str = "i
     if tipo == "audio":
         payload["ptt"] = True
     client = await get_client()
-    resp = await client.post(
-        f"{_get_base_url()}/sessions/{await _get_session_id_garantido()}/messages/{endpoint}",
-        json=payload,
-        headers=_get_headers(),
-    )
-    resp.raise_for_status()
+    try:
+        resp = await client.post(
+            f"{_get_base_url()}/sessions/{await _get_session_id_garantido()}/messages/{endpoint}",
+            json=payload,
+            headers=_get_headers(),
+        )
+        resp.raise_for_status()
+    except Exception:
+        _ultimos_envios.pop(key, None)
+        raise
+    if len(_ultimos_envios) > 1000:
+        agora = time.time()
+        expirados = [k for k, v in _ultimos_envios.items() if agora - v > 3600]
+        for k in expirados:
+            del _ultimos_envios[k]
     return _safe_json(resp)
 
 
@@ -495,16 +512,20 @@ async def configurar_webhook(webhook_url: str, force: bool = False) -> dict:
                         and wh.get("active") is not False
                         and "message.received" in (wh.get("events") or [])
                     ):
-                        if not force:
-                            logger.debug("Webhook já existe e está ativo: %s", wh.get("id"))
-                            return wh
-                        # force=True: remover para recriar
+                        if "message.sent" in (wh.get("events") or []):
+                            if not force:
+                                logger.debug("Webhook OK: %s eventos=%s", wh.get("id"), wh.get("events"))
+                                return wh
+                            logger.info("Webhook removido para recriar (force): %s", wh["id"])
+                        else:
+                            if not force:
+                                continue
+                            logger.info("Webhook sem message.sent removido: %s", wh["id"])
                         if wh.get("id"):
                             await client.delete(
                                 f"{_get_base_url()}/sessions/{session_id}/webhooks/{wh['id']}",
                                 headers=_get_headers(),
                             )
-                            logger.info("Webhook antigo removido (force): %s", wh["id"])
     except Exception as e:
         logger.warning("Falha ao listar webhooks: %s", e)
 
@@ -513,7 +534,7 @@ async def configurar_webhook(webhook_url: str, force: bool = False) -> dict:
         f"{_get_base_url()}/sessions/{session_id}/webhooks",
         json={
             "url": webhook_url,
-                    "events": ["message.received", "session.status"],
+                    "events": ["message.received", "message.sent", "session.status"],
             "secret": settings.openwa_api_key,
         },
         headers=_get_headers(),
@@ -531,7 +552,7 @@ async def configurar_webhook(webhook_url: str, force: bool = False) -> dict:
                 f"{_get_base_url()}/sessions/{session_id}/webhooks",
                 json={
                     "url": webhook_url,
-            "events": ["message.received", "session.status"],
+            "events": ["message.received", "message.sent", "session.status"],
                     "secret": settings.openwa_api_key,
                 },
                 headers=_get_headers(),

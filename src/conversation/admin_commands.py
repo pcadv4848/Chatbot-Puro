@@ -24,7 +24,7 @@ def _get_bot_phone() -> str:
 
 
 ADMIN_INPUTS = {
-    "RESETAR.", "BOT.", "HUMANO.", "STATUS.", "ANTIGO.", "FOLLOWUP.", "FOLLOWUP:",
+    "RESETAR", "RESETAR.", "BOT.", "HUMANO.", "STATUS.", "ANTIGO.", "FOLLOWUP.", "FOLLOWUP:",
 }
 
 ADMIN_ALIASES: dict[str, str] = {
@@ -40,8 +40,12 @@ async def processar_admin_commands(texto: str, sessao: SessionState, admin_cmd: 
     admin_id = settings.admin_whatsapp or ""
     bot_phone = _get_bot_phone() or ""
 
-    # ── RESETAR: disponível para qualquer usuário ──
+    # ── RESETAR: apenas admin ──
     if texto.upper().strip(".!?") == "RESETAR":
+        if not admin_id and not bot_phone:
+            return None
+        if not admin_cmd and not mesmo_telefone(sessao.whatsapp_id, admin_id) and not mesmo_telefone(sessao.whatsapp_id, bot_phone):
+            return None
         from src.conversation.storage import deletar_sessao
         key = session_key(sessao.whatsapp_id)
         await deletar_sessao(sessao.whatsapp_id)
