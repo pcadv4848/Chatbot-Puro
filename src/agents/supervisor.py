@@ -390,10 +390,7 @@ async def _processar_classificando(texto: str, sessao: SessionState) -> str:
         sessao.existing_client = True
         sessao.status = SessionStatus.AGUARDANDO_ADVOGADO
         await salvar_sessao(sessao)
-        return (
-            "Perfeito, já entendi seu caso. Vou dar continuidade ao seu atendimento."
-            " Me envie fotos do seu RG e CPF por aqui mesmo que já começo a preparar tudo."
-        )
+        return MENSAGEM_HUMANO
 
     if sessao.step > _MAX_TENTATIVAS_CLASSIFICACAO:
         from src.services.attended_clients import mark_attended
